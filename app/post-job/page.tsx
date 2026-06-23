@@ -2,7 +2,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useAccount } from 'wagmi'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { AppShell } from '@/components/AppShell'
+import { TopNav } from '@/components/TopNav'
 import { writeContract, getProfile } from '@/lib/genlayer'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 
@@ -154,10 +154,17 @@ function PostJobContent() {
 
 export default function PostJobPage() {
   return (
-    <AppShell>
+    <>
+      <TopNav />
+      <div className="orb-orange" style={{ opacity: 0.35 }} />
+      <div className="orb-purple" style={{ opacity: 0.35 }} />
+      <div className="page" style={{ paddingBottom: 100 }}>
+        <div className="inner" style={{ paddingTop: 40 }}>
       <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><div className="spinner" style={{ width: 24, height: 24 }} /></div>}>
         <PostJobContent />
       </Suspense>
-    </AppShell>
+            </div>
+      </div>
+    </>
   )
 }

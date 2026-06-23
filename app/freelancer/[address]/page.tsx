@@ -2,7 +2,7 @@
 import { useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAccount } from 'wagmi'
-import { AppShell } from '@/components/AppShell'
+import { TopNav } from '@/components/TopNav'
 import { getProfile, shortAddress, formatGEN } from '@/lib/genlayer'
 import { usePolling } from '@/hooks/usePolling'
 
@@ -15,21 +15,40 @@ export default function FreelancerPage() {
 
   const isMe = myAddress?.toLowerCase() === freelancerAddr?.toLowerCase()
 
-  if (loading) return <AppShell><div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><div className="spinner" style={{ width: 28, height: 28 }} /></div></AppShell>
+  if (loading) return <>
+      <TopNav />
+      <div className="orb-orange" style={{ opacity: 0.35 }} />
+      <div className="orb-purple" style={{ opacity: 0.35 }} />
+      <div className="page" style={{ paddingBottom: 100 }}>
+        <div className="inner" style={{ paddingTop: 40 }}><div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><div className="spinner" style={{ width: 28, height: 28 }} /></div>        </div>
+      </div>
+    </>
   if (!profile?.found || profile?.role !== 'freelancer') return (
-    <AppShell>
+    <>
+      <TopNav />
+      <div className="orb-orange" style={{ opacity: 0.35 }} />
+      <div className="orb-purple" style={{ opacity: 0.35 }} />
+      <div className="page" style={{ paddingBottom: 100 }}>
+        <div className="inner" style={{ paddingTop: 40 }}>
       <div style={{ textAlign: 'center', padding: 40 }}>
         <p style={{ color: 'var(--muted)', marginBottom: 16 }}>Freelancer not found.</p>
         <button className="btn-outline" style={{ padding: '9px 18px', fontSize: 13 }} onClick={() => router.push('/marketplace')}>← Back to Marketplace</button>
       </div>
-    </AppShell>
+            </div>
+      </div>
+    </>
   )
 
   const skills = profile.skills ? profile.skills.split(',').map((s: string) => s.trim()).filter(Boolean) : []
   const totalEarned = formatGEN(profile.total_earned || '0')
 
   return (
-    <AppShell>
+    <>
+      <TopNav />
+      <div className="orb-orange" style={{ opacity: 0.35 }} />
+      <div className="orb-purple" style={{ opacity: 0.35 }} />
+      <div className="page" style={{ paddingBottom: 100 }}>
+        <div className="inner" style={{ paddingTop: 40 }}>
       <div style={{ maxWidth: 540 }}>
         <button onClick={() => router.back()} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 5 }}>← Back</button>
 
@@ -98,6 +117,8 @@ export default function FreelancerPage() {
           </button>
         )}
       </div>
-    </AppShell>
+            </div>
+      </div>
+    </>
   )
 }

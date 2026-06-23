@@ -2,7 +2,7 @@
 import { useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAccount } from 'wagmi'
-import { AppShell } from '@/components/AppShell'
+import { TopNav } from '@/components/TopNav'
 import { StatusBadge } from '@/components/StatusBadge'
 import { getJob, writeContract, shortAddress, formatGEN, timeAgo } from '@/lib/genlayer'
 import { usePolling } from '@/hooks/usePolling'
@@ -26,8 +26,22 @@ export default function JobPage() {
     catch (e: any) { setTxStatus('error'); setErrMsg((e?.message || '').slice(0, 200)) }
   }
 
-  if (loading) return <AppShell><div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div className="spinner" style={{ width: 32, height: 32 }} /></div></AppShell>
-  if (!job?.found) return <AppShell><div style={{ padding: 20 }}><p style={{ color: 'var(--muted)' }}>Job #{id} not found.</p><button className="btn-outline" style={{ padding: '8px 16px', fontSize: 13, marginTop: 12 }} onClick={() => router.back()}>← Back</button></div></AppShell>
+  if (loading) return <>
+      <TopNav />
+      <div className="orb-orange" style={{ opacity: 0.35 }} />
+      <div className="orb-purple" style={{ opacity: 0.35 }} />
+      <div className="page" style={{ paddingBottom: 100 }}>
+        <div className="inner" style={{ paddingTop: 40 }}><div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div className="spinner" style={{ width: 32, height: 32 }} /></div>        </div>
+      </div>
+    </>
+  if (!job?.found) return <>
+      <TopNav />
+      <div className="orb-orange" style={{ opacity: 0.35 }} />
+      <div className="orb-purple" style={{ opacity: 0.35 }} />
+      <div className="page" style={{ paddingBottom: 100 }}>
+        <div className="inner" style={{ paddingTop: 40 }}><div style={{ padding: 20 }}><p style={{ color: 'var(--muted)' }}>Job #{id} not found.</p><button className="btn-outline" style={{ padding: '8px 16px', fontSize: 13, marginTop: 12 }} onClick={() => router.back()}>← Back</button></div>        </div>
+      </div>
+    </>
 
   const isClient = address?.toLowerCase() === job.client?.toLowerCase()
   const isFreelancer = address?.toLowerCase() === job.freelancer?.toLowerCase()
@@ -35,7 +49,12 @@ export default function JobPage() {
   const verdictColor = job.ai_verdict === 'APPROVED' ? 'var(--green)' : job.ai_verdict === 'REJECTED' ? 'var(--red)' : 'var(--muted)'
 
   return (
-    <AppShell>
+    <>
+      <TopNav />
+      <div className="orb-orange" style={{ opacity: 0.35 }} />
+      <div className="orb-purple" style={{ opacity: 0.35 }} />
+      <div className="page" style={{ paddingBottom: 100 }}>
+        <div className="inner" style={{ paddingTop: 40 }}>
       <div style={{ maxWidth: 560 }}>
         {/* Back */}
         <button onClick={() => router.back()} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 5 }}>← Back</button>
@@ -126,6 +145,8 @@ export default function JobPage() {
           )}
         </div>
       </div>
-    </AppShell>
+            </div>
+      </div>
+    </>
   )
 }

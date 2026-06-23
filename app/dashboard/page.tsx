@@ -2,7 +2,7 @@
 import { useCallback, useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { useRouter } from 'next/navigation'
-import { AppShell } from '@/components/AppShell'
+import { TopNav } from '@/components/TopNav'
 import { StatusBadge } from '@/components/StatusBadge'
 import { getProfile, getJobsByClient, getJobsByFreelancer, shortAddress, formatGEN, timeAgo, writeContract } from '@/lib/genlayer'
 import { usePolling } from '@/hooks/usePolling'
@@ -60,7 +60,12 @@ export default function DashboardPage() {
   )
 
   return (
-    <AppShell>
+    <>
+      <TopNav />
+      <div className="orb-orange" style={{ opacity: 0.35 }} />
+      <div className="orb-purple" style={{ opacity: 0.35 }} />
+      <div className="page" style={{ paddingBottom: 100 }}>
+        <div className="inner" style={{ paddingTop: 40 }}>
       {!isConnected ? (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
           <p className="font-display" style={{ fontSize: 20, fontWeight: 700 }}>Connect wallet</p>
@@ -144,6 +149,8 @@ export default function DashboardPage() {
           )}
         </div>
       )}
-    </AppShell>
+            </div>
+      </div>
+    </>
   )
 }
