@@ -4,6 +4,8 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAccount, useDisconnect } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEffect, useState } from 'react'
+import { getProfile } from '@/lib/genlayer'
+import { resolveGNS } from '@/lib/gns'
 
 function ThemeToggle() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
@@ -22,11 +24,11 @@ function ThemeToggle() {
   )
 }
 
+// Nav items — NO Post Job (only accessible via Hire button on freelancer profile)
 const LINKS = [
   { href: '/', num: '0.1', label: 'Home' },
   { href: '/marketplace', num: '0.2', label: 'Marketplace' },
-  { href: '/post-job', num: '0.3', label: 'Post Job' },
-  { href: '/dashboard', num: '0.4', label: 'Dashboard' },
+  { href: '/dashboard', num: '0.3', label: 'Dashboard' },
 ]
 
 export function TopNav() {
@@ -35,7 +37,24 @@ export function TopNav() {
   const { address, isConnected } = useAccount()
   const { disconnect } = useDisconnect()
   const { openConnectModal } = useConnectModal()
+  const [profile, setProfile] = useState<any>(null)
+  const [genName, setGenName] = useState<string>('')
+  const [profileLoading, setProfileLoading] = useState(false)
+
+  useEffect(() => {
+    if (!address) { setProfile(null); setGenName(''); return }
+    setProfileLoading(true)
+    Promise.all([
+      getProfile(address),
+      resolveGNS(address),
+    ]).then(([p, gns]) => {
+      setProfile(p?.found ? p : null)
+      setGenName(gns || '')
+    }).catch(() => {}).finally(() => setProfileLoading(false))
+  }, [address])
+
   const short = address ? `${address.slice(0, 6)}···${address.slice(-4)}` : ''
+  const displayName = genName || profile?.name || short
 
   return (
     <>
@@ -60,9 +79,24 @@ export function TopNav() {
           <ThemeToggle />
           {isConnected ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {/* Show profile status */}
+              {!profileLoading && !profile && (
+                <button className="btn-orange" style={{ padding: '6px 14px', fontSize: 12 }} onClick={() => router.push('/register')}>
+                  + Create Profile
+                </button>
+              )}
+              {profile && (
+                <span className="badge" style={{
+                  color: profile.role === 'freelancer' ? 'var(--orange)' : 'var(--purple2)',
+                  background: profile.role === 'freelancer' ? 'rgba(255,123,53,0.12)' : 'rgba(123,91,255,0.12)',
+                  fontSize: 10,
+                }}>
+                  {profile.role === 'freelancer' ? '💼' : '🏢'} {profile.role}
+                </span>
+              )}
               <button className="btn-glass" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => router.push('/dashboard')}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', display: 'inline-block' }} />
-                {short}
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', flexShrink: 0 }} />
+                {genName ? <span style={{ color: 'var(--purple2)', fontWeight: 600 }}>{genName}</span> : displayName}
               </button>
               <button className="btn-outline" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => disconnect()}>
                 Leave
@@ -71,7 +105,7 @@ export function TopNav() {
           ) : (
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn-glass" style={{ padding: '7px 16px', fontSize: 13 }} onClick={openConnectModal}>Login</button>
-              <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 13 }} onClick={() => { openConnectModal?.(); }}>
+              <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 13 }} onClick={openConnectModal}>
                 Get Started →
               </button>
             </div>
@@ -83,13 +117,13 @@ export function TopNav() {
       <nav className="mobile-nav">
         {LINKS.map(({ href, num, label }) => (
           <Link key={href} href={href} className={`mob-item ${path === href ? 'active' : ''}`}>
-            <span style={{ fontSize: 14 }}>{num === '0.1' ? '🏠' : num === '0.2' ? '🏪' : num === '0.3' ? '➕' : '📊'}</span>
+            <span style={{ fontSize: 14 }}>{num === '0.1' ? '🏠' : num === '0.2' ? '🏪' : '📊'}</span>
             {label}
           </Link>
         ))}
         <div className="mob-item" style={{ cursor: 'pointer' }} onClick={isConnected ? () => disconnect() : openConnectModal}>
           <span style={{ fontSize: 14 }}>👤</span>
-          {isConnected ? short.slice(0, 8) : 'Connect'}
+          {isConnected ? (genName || short.slice(0, 8)) : 'Connect'}
         </div>
       </nav>
     </>
