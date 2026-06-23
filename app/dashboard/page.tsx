@@ -117,6 +117,17 @@ export default function DashboardPage() {
                       <span style={{ fontSize: 13, textAlign: 'right', wordBreak: 'break-word' }}>{val as string}</span>
                     </div>
                   ))}
+                  {/* Role is permanent — explain clearly */}
+                  <div className="panel" style={{ padding: '14px 16px', borderColor: 'rgba(123,91,255,0.2)', background: 'rgba(123,91,255,0.05)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                      <span style={{ fontSize: 18 }}>{p.role === 'freelancer' ? '💼' : '🏢'}</span>
+                      <p className="font-display" style={{ fontSize: 14, fontWeight: 700, textTransform: 'capitalize' }}>{p.role}</p>
+                      <span className="badge" style={{ color: 'var(--green)', background: 'rgba(0,229,160,0.1)', fontSize: 9 }}>PERMANENT</span>
+                    </div>
+                    <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
+                      Your role is locked on-chain. To operate as a {p.role === 'freelancer' ? 'client' : 'freelancer'}, connect a different wallet and create a new profile.
+                    </p>
+                  </div>
                   <button className="btn-outline" style={{ padding: '10px', fontSize: 13 }} onClick={() => setEditMode(true)}>Edit Profile</button>
                 </>
               ) : (

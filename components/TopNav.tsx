@@ -15,7 +15,8 @@ function ThemeToggle() {
   }, [])
   function toggle() {
     const n = theme === 'dark' ? 'light' : 'dark'
-    setTheme(n); document.documentElement.setAttribute('data-theme', n); localStorage.setItem('fm-theme', n)
+    setTheme(n); document.documentElement.setAttribute('data-theme', n)
+    localStorage.setItem('fm-theme', n)
   }
   return (
     <button onClick={toggle} style={{ background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>
@@ -24,12 +25,13 @@ function ThemeToggle() {
   )
 }
 
-// Nav items — NO Post Job (only accessible via Hire button on freelancer profile)
 const LINKS = [
   { href: '/', num: '0.1', label: 'Home' },
   { href: '/marketplace', num: '0.2', label: 'Marketplace' },
   { href: '/dashboard', num: '0.3', label: 'Dashboard' },
 ]
+
+type ProfileState = 'loading' | 'none' | 'registered'
 
 export function TopNav() {
   const path = usePathname()
@@ -37,24 +39,37 @@ export function TopNav() {
   const { address, isConnected } = useAccount()
   const { disconnect } = useDisconnect()
   const { openConnectModal } = useConnectModal()
+
+  // Start as 'loading' so we never flash "Create Profile" for registered users
+  const [profileState, setProfileState] = useState<ProfileState>('loading')
   const [profile, setProfile] = useState<any>(null)
   const [genName, setGenName] = useState<string>('')
-  const [profileLoading, setProfileLoading] = useState(false)
 
   useEffect(() => {
-    if (!address) { setProfile(null); setGenName(''); return }
-    setProfileLoading(true)
+    if (!isConnected || !address) {
+      setProfileState('loading')
+      setProfile(null)
+      setGenName('')
+      return
+    }
+
+    setProfileState('loading')
+
     Promise.all([
       getProfile(address),
       resolveGNS(address),
     ]).then(([p, gns]) => {
-      setProfile(p?.found ? p : null)
+      const hasProfile = p?.found === true || p?.found === 'true'
+      setProfile(hasProfile ? p : null)
       setGenName(gns || '')
-    }).catch(() => {}).finally(() => setProfileLoading(false))
-  }, [address])
+      setProfileState(hasProfile ? 'registered' : 'none')
+    }).catch(() => {
+      setProfileState('none')
+    })
+  }, [address, isConnected])
 
   const short = address ? `${address.slice(0, 6)}···${address.slice(-4)}` : ''
-  const displayName = genName || profile?.name || short
+  const displayId = genName || short
 
   return (
     <>
@@ -74,39 +89,49 @@ export function TopNav() {
           ))}
         </div>
 
-        {/* Right: theme + wallet */}
+        {/* Right */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <ThemeToggle />
-          {isConnected ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {/* Show profile status */}
-              {!profileLoading && !profile && (
-                <button className="btn-orange" style={{ padding: '6px 14px', fontSize: 12 }} onClick={() => router.push('/register')}>
+
+          {!isConnected && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn-glass" style={{ padding: '7px 16px', fontSize: 13 }} onClick={openConnectModal}>Login</button>
+              <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 13 }} onClick={openConnectModal}>Get Started →</button>
+            </div>
+          )}
+
+          {isConnected && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+
+              {/* Only show Create Profile if confirmed NOT registered */}
+              {profileState === 'none' && (
+                <button className="btn-orange" style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600 }} onClick={() => router.push('/register')}>
                   + Create Profile
                 </button>
               )}
-              {profile && (
+
+              {/* Role badge — only show when confirmed registered */}
+              {profileState === 'registered' && profile && (
                 <span className="badge" style={{
                   color: profile.role === 'freelancer' ? 'var(--orange)' : 'var(--purple2)',
                   background: profile.role === 'freelancer' ? 'rgba(255,123,53,0.12)' : 'rgba(123,91,255,0.12)',
-                  fontSize: 10,
+                  fontSize: 10, padding: '4px 10px',
                 }}>
                   {profile.role === 'freelancer' ? '💼' : '🏢'} {profile.role}
                 </span>
               )}
-              <button className="btn-glass" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => router.push('/dashboard')}>
+
+              {/* Wallet button */}
+              <button className="btn-glass" style={{ padding: '6px 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => router.push('/dashboard')}>
                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', flexShrink: 0 }} />
-                {genName ? <span style={{ color: 'var(--purple2)', fontWeight: 600 }}>{genName}</span> : displayName}
+                {genName
+                  ? <span style={{ color: 'var(--purple2)', fontWeight: 700 }}>{genName}</span>
+                  : <span>{short}</span>
+                }
               </button>
+
               <button className="btn-outline" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => disconnect()}>
                 Leave
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn-glass" style={{ padding: '7px 16px', fontSize: 13 }} onClick={openConnectModal}>Login</button>
-              <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 13 }} onClick={openConnectModal}>
-                Get Started →
               </button>
             </div>
           )}
@@ -121,7 +146,7 @@ export function TopNav() {
             {label}
           </Link>
         ))}
-        <div className="mob-item" style={{ cursor: 'pointer' }} onClick={isConnected ? () => disconnect() : openConnectModal}>
+        <div className="mob-item" style={{ cursor: 'pointer' }} onClick={isConnected ? () => router.push('/dashboard') : openConnectModal}>
           <span style={{ fontSize: 14 }}>👤</span>
           {isConnected ? (genName || short.slice(0, 8)) : 'Connect'}
         </div>
