@@ -1,5 +1,8 @@
-import { CONTRACT_ADDRESS, TX_POLL_INTERVAL_MS, TX_TIMEOUT_MS } from './config'
+import { CONTRACT_ADDRESS } from './config'
 import { TransactionStatus } from 'genlayer-js/types'
+
+export const TX_POLL_INTERVAL_MS = 4000
+export const TX_TIMEOUT_MS = 10 * 60 * 1000
 
 // ── Reads via API route ───────────────────────────────────────────────────────
 
@@ -18,6 +21,8 @@ async function readContract(method: string, args: unknown[] = []) {
   return result
 }
 
+export async function getProfile(address: string) { return readContract('get_profile', [address]) }
+export async function getAllFreelancers() { return readContract('get_all_freelancers', []) }
 export async function getJob(jobId: string) { return readContract('get_job', [jobId]) }
 export async function getJobsByClient(address: string) { return readContract('get_jobs_by_client', [address]) }
 export async function getJobsByFreelancer(address: string) { return readContract('get_jobs_by_freelancer', [address]) }
@@ -33,12 +38,7 @@ async function getClient(address: string) {
   return client as any
 }
 
-export async function writeContract(
-  address: string,
-  functionName: string,
-  args: unknown[],
-  value?: bigint,
-) {
+export async function writeContract(address: string, functionName: string, args: unknown[], value?: bigint) {
   const client = await getClient(address)
   const hash = await client.writeContract({
     address: CONTRACT_ADDRESS,
@@ -46,12 +46,7 @@ export async function writeContract(
     args,
     value: value ?? BigInt(0),
   })
-  await client.waitForTransactionReceipt({
-    hash,
-    status: TransactionStatus.ACCEPTED,
-    interval: 4000,
-    retries: 60,
-  })
+  await client.waitForTransactionReceipt({ hash, status: TransactionStatus.ACCEPTED, interval: 4000, retries: 60 })
   return hash
 }
 
