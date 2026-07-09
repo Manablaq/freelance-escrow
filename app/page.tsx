@@ -12,7 +12,7 @@ export default function HomePage() {
   const router = useRouter()
   const fetcher = useCallback(() => getStats(), [])
   const { data: stats } = usePolling(fetcher, 5000)
-  const s = stats as any
+  const s = stats
 
   return (
     <>
@@ -41,7 +41,7 @@ export default function HomePage() {
               </h1>
 
               <p className="fade-up-d2" style={{ fontSize: 16, lineHeight: 1.8, color: 'var(--muted)', marginBottom: 32, maxWidth: 420 }}>
-                AI-powered freelance marketplace on GenLayer. 5 independent validators verify your work. Payment auto-releases on approval. No middlemen.
+                Freelance escrow on GenLayer Bradbury. Clients fund jobs, freelancers submit public deliverables, and the contract can use GenLayer AI evaluation before accepted-state release.
               </p>
 
               {/* CTAs */}
@@ -60,7 +60,7 @@ export default function HomePage() {
                   { val: s?.total_freelancers || '0', label: 'freelancers' },
                   { val: s?.total_jobs || '0', label: 'jobs posted' },
                   { val: formatGEN(s?.total_paid || '0'), label: 'paid out' },
-                  { val: 'AI', label: 'verified' },
+                  { val: 'AI', label: 'assisted review' },
                 ].map(({ val, label }) => (
                   <div key={label}>
                     <p className="font-display" style={{ fontSize: 28, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.02em' }}>{val}</p>

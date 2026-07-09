@@ -3,7 +3,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useAccount } from 'wagmi'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { TopNav } from '@/components/TopNav'
-import { writeContract, getProfile } from '@/lib/genlayer'
+import { writeContract, getProfile, type Profile } from '@/lib/genlayer'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 
 function PostJobContent() {
@@ -18,7 +18,7 @@ function PostJobContent() {
   const [form, setForm] = useState({ title: '', description: '', freelancer: preFilledFreelancer, deadline: '' })
   const [txStatus, setTxStatus] = useState<'idle' | 'checking' | 'submitting' | 'done' | 'error'>('idle')
   const [errMsg, setErrMsg] = useState('')
-  const [clientProfile, setClientProfile] = useState<any>(null)
+  const [clientProfile, setClientProfile] = useState<Profile | null>(null)
 
   useEffect(() => {
     if (!address) return
@@ -36,9 +36,10 @@ function PostJobContent() {
       await writeContract(address, 'create_job', [form.title, form.description, form.freelancer, form.deadline])
       setTxStatus('done')
       setTimeout(() => router.push('/dashboard'), 1500)
-    } catch (e: any) {
+    } catch (e: unknown) {
       setTxStatus('error')
-      setErrMsg((e?.message || String(e)).slice(0, 200))
+      const message = e instanceof Error ? e.message : String(e)
+      setErrMsg(message.slice(0, 200))
     }
   }
 
@@ -89,7 +90,7 @@ function PostJobContent() {
               </div>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block', marginBottom: 5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Description <span style={{ color: 'var(--purple)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>— min 20 chars</span></label>
-                <textarea className="input" style={{ padding: '10px 13px', fontSize: 14 }} placeholder="Describe exactly what needs to be delivered. AI validators will use this to verify the work." value={form.description} onChange={e => f('description', e.target.value)} />
+                <textarea className="input" style={{ padding: '10px 13px', fontSize: 14 }} placeholder="Describe exactly what needs to be delivered. The contract's AI evaluation uses this as review criteria if verification is triggered." value={form.description} onChange={e => f('description', e.target.value)} />
                 <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{form.description.length} chars</p>
               </div>
               <div>

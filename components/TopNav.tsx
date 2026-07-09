@@ -4,15 +4,17 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAccount, useDisconnect } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEffect, useState } from 'react'
-import { getProfile } from '@/lib/genlayer'
+import { getProfile, type Profile } from '@/lib/genlayer'
 import { resolveGNS } from '@/lib/gns'
 
 function ThemeToggle() {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark'
+    return (localStorage.getItem('fm-theme') as 'dark' | 'light' | null) || 'dark'
+  })
   useEffect(() => {
-    const s = localStorage.getItem('fm-theme') as 'dark' | 'light' | null
-    if (s) { setTheme(s); document.documentElement.setAttribute('data-theme', s) }
-  }, [])
+    document.documentElement.setAttribute('data-theme', theme)
+  }, [theme])
   function toggle() {
     const n = theme === 'dark' ? 'light' : 'dark'
     setTheme(n); document.documentElement.setAttribute('data-theme', n)
@@ -42,34 +44,45 @@ export function TopNav() {
 
   // Start as 'loading' so we never flash "Create Profile" for registered users
   const [profileState, setProfileState] = useState<ProfileState>('loading')
-  const [profile, setProfile] = useState<any>(null)
+  const [profile, setProfile] = useState<Profile | null>(null)
   const [genName, setGenName] = useState<string>('')
 
   useEffect(() => {
-    if (!isConnected || !address) {
+    let cancelled = false
+
+    async function loadProfile() {
+      await Promise.resolve()
+      if (cancelled) return
+
+      if (!isConnected || !address) {
+        setProfileState('loading')
+        setProfile(null)
+        setGenName('')
+        return
+      }
+
       setProfileState('loading')
-      setProfile(null)
-      setGenName('')
-      return
+
+      try {
+        const [p, gns] = await Promise.all([
+          getProfile(address),
+          resolveGNS(address),
+        ])
+        if (cancelled) return
+        const hasProfile = p?.found === true || p?.found === 'true'
+        setProfile(hasProfile ? p : null)
+        setGenName(gns || '')
+        setProfileState(hasProfile ? 'registered' : 'none')
+      } catch {
+        if (!cancelled) setProfileState('none')
+      }
     }
 
-    setProfileState('loading')
-
-    Promise.all([
-      getProfile(address),
-      resolveGNS(address),
-    ]).then(([p, gns]) => {
-      const hasProfile = p?.found === true || p?.found === 'true'
-      setProfile(hasProfile ? p : null)
-      setGenName(gns || '')
-      setProfileState(hasProfile ? 'registered' : 'none')
-    }).catch(() => {
-      setProfileState('none')
-    })
+    void loadProfile()
+    return () => { cancelled = true }
   }, [address, isConnected])
 
   const short = address ? `${address.slice(0, 6)}···${address.slice(-4)}` : ''
-  const displayId = genName || short
 
   return (
     <>

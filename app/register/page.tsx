@@ -24,7 +24,10 @@ export default function RegisterPage() {
       await writeContract(address, 'register', [role, form.name, form.bio, form.skills, form.rate, form.rate_type, form.portfolio, form.twitter, form.github])
       setStatus('done')
       setTimeout(() => router.push(role === 'freelancer' ? '/dashboard' : '/marketplace'), 1500)
-    } catch (e: any) { setStatus('error'); setErrMsg((e?.message || '').slice(0, 200)) }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      setStatus('error'); setErrMsg(message.slice(0, 200))
+    }
   }
 
   return (

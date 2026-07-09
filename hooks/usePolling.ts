@@ -8,23 +8,31 @@ export function usePolling<T>(
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(immediate)
   const [error, setError] = useState<string | null>(null)
-  const timerRef = useRef<NodeJS.Timeout>()
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const mountedRef = useRef(true)
 
   const run = useCallback(async () => {
     try {
       const result = await fetcher()
       if (mountedRef.current) { setData(result); setError(null); setLoading(false) }
-    } catch (e: any) {
-      if (mountedRef.current) { setError(e.message); setLoading(false) }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Request failed'
+      if (mountedRef.current) { setError(message); setLoading(false) }
     }
   }, [fetcher])
 
   useEffect(() => {
     mountedRef.current = true
-    if (immediate) run()
+    let initialId: ReturnType<typeof setTimeout> | undefined
+    if (immediate) {
+      initialId = setTimeout(() => { void run() }, 0)
+    }
     timerRef.current = setInterval(run, intervalMs)
-    return () => { mountedRef.current = false; clearInterval(timerRef.current) }
+    return () => {
+      mountedRef.current = false
+      if (initialId) clearTimeout(initialId)
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
   }, [run, intervalMs, immediate])
 
   return { data, loading, error, refetch: run }

@@ -61,7 +61,7 @@ export default function FreelancerPage() {
             <div>
               <h1 className="font-display" style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.01em', marginBottom: 4 }}>{profile.name}</h1>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span className="address-chip">{shortAddress(profile.address)}</span>
+                <span className="address-chip">{shortAddress(profile.address || freelancerAddr)}</span>
                 <span className="badge" style={{ color: 'var(--cyan)', background: 'rgba(0,212,255,0.1)' }}>💼 Freelancer</span>
               </div>
             </div>
@@ -106,7 +106,7 @@ export default function FreelancerPage() {
         {/* Hire button */}
         {!isMe && (
           <button className="btn-primary" style={{ padding: '14px', fontSize: 16, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-            onClick={() => router.push(`/post-job?freelancer=${profile.address}&name=${encodeURIComponent(profile.name)}`)}>
+            onClick={() => router.push(`/post-job?freelancer=${profile.address || freelancerAddr}&name=${encodeURIComponent(profile.name || '')}`)}>
             ⚡ Hire {profile.name} →
           </button>
         )}

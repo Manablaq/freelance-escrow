@@ -1,12 +1,60 @@
 import { CONTRACT_ADDRESS } from './config'
 import { TransactionStatus } from 'genlayer-js/types'
 
+export type Profile = {
+  found?: boolean | string
+  address?: string
+  role?: 'client' | 'freelancer' | string
+  name?: string
+  bio?: string
+  skills?: string
+  rate?: string
+  rate_type?: string
+  portfolio?: string
+  twitter?: string
+  github?: string
+  jobs_completed?: string
+  total_earned?: string
+}
+
+export type Job = {
+  found?: boolean | string
+  job_id?: string
+  title?: string
+  description?: string
+  client?: string
+  freelancer?: string
+  deadline?: string
+  status?: string
+  created_at?: string
+  deliverable_url?: string
+  ai_verdict?: string
+  ai_reasoning?: string
+  escrow_balance?: string
+}
+
+export type Stats = {
+  total_jobs?: string
+  total_paid?: string
+  total_freelancers?: string
+}
+
 export const TX_POLL_INTERVAL_MS = 4000
 export const TX_TIMEOUT_MS = 10 * 60 * 1000
+const WRITE_METHODS = new Set([
+  'register',
+  'update_profile',
+  'create_job',
+  'fund_job',
+  'submit_work',
+  'verify_and_release',
+  'client_refund',
+  'cancel_job',
+])
 
 // ── Reads via API route ───────────────────────────────────────────────────────
 
-async function readContract(method: string, args: unknown[] = []) {
+async function readContract<T>(method: string, args: unknown[] = []): Promise<T> {
   const res = await fetch('/api/contract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -18,27 +66,32 @@ async function readContract(method: string, args: unknown[] = []) {
   if (typeof result === 'string') {
     try { result = JSON.parse(result) } catch {}
   }
-  return result
+  return result as T
 }
 
-export async function getProfile(address: string) { return readContract('get_profile', [address]) }
-export async function getAllFreelancers() { return readContract('get_all_freelancers', []) }
-export async function getJob(jobId: string) { return readContract('get_job', [jobId]) }
-export async function getJobsByClient(address: string) { return readContract('get_jobs_by_client', [address]) }
-export async function getJobsByFreelancer(address: string) { return readContract('get_jobs_by_freelancer', [address]) }
-export async function getStats() { return readContract('get_stats', []) }
+export async function getProfile(address: string) { return readContract<Profile>('get_profile', [address]) }
+export async function getAllFreelancers() { return readContract<Profile[]>('get_all_freelancers', []) }
+export async function getJob(jobId: string) { return readContract<Job>('get_job', [jobId]) }
+export async function getJobsByClient(address: string) { return readContract<Job[]>('get_jobs_by_client', [address]) }
+export async function getJobsByFreelancer(address: string) { return readContract<Job[]>('get_jobs_by_freelancer', [address]) }
+export async function getStats() { return readContract<Stats>('get_stats', []) }
 
 // ── Writes via genlayer-js ────────────────────────────────────────────────────
 
 async function getClient(address: string) {
   const { createClient } = await import('genlayer-js')
   const { testnetBradbury } = await import('genlayer-js/chains')
-  const client = createClient({ chain: testnetBradbury, account: address as `0x${string}` })
-  try { await (client as any).connect('testnetBradbury') } catch {}
-  return client as any
+  const client = createClient({ chain: testnetBradbury, account: address as `0x${string}` }) as {
+    connect?: (chainName: string) => Promise<unknown>
+    writeContract: (request: { address: `0x${string}`; functionName: string; args: unknown[]; value: bigint }) => Promise<string>
+    waitForTransactionReceipt: (request: { hash: string; status: TransactionStatus; interval: number; retries: number }) => Promise<unknown>
+  }
+  try { await client.connect?.('testnetBradbury') } catch {}
+  return client
 }
 
 export async function writeContract(address: string, functionName: string, args: unknown[], value?: bigint) {
+  if (!WRITE_METHODS.has(functionName)) throw new Error('Unsupported contract write method.')
   const client = await getClient(address)
   const hash = await client.writeContract({
     address: CONTRACT_ADDRESS,

@@ -1,10 +1,10 @@
 'use client'
-import { useCallback, useState, useEffect } from 'react'
+import { useCallback, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useRouter } from 'next/navigation'
 import { TopNav } from '@/components/TopNav'
 import { StatusBadge } from '@/components/StatusBadge'
-import { getProfile, getJobsByClient, getJobsByFreelancer, shortAddress, formatGEN, timeAgo, writeContract } from '@/lib/genlayer'
+import { getProfile, getJobsByClient, getJobsByFreelancer, shortAddress, formatGEN, timeAgo, writeContract, type Job, type Profile } from '@/lib/genlayer'
 import { usePolling } from '@/hooks/usePolling'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 
@@ -14,7 +14,7 @@ export default function DashboardPage() {
   const router = useRouter()
   const [tab, setTab] = useState<'jobs' | 'profile'>('jobs')
   const [editMode, setEditMode] = useState(false)
-  const [editForm, setEditForm] = useState<any>({})
+  const [editForm, setEditForm] = useState<Partial<Profile>>({})
   const [editStatus, setEditStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
 
   const profileFetcher = useCallback(() => address ? getProfile(address) : Promise.resolve(null), [address])
@@ -31,29 +31,41 @@ export default function DashboardPage() {
   const allJobs = p?.role === 'client' ? clientJobs : freelancerJobs
   const loading = p?.role === 'client' ? cL : fL
 
-  useEffect(() => { if (p) setEditForm({ name: p.name, bio: p.bio, skills: p.skills, rate: p.rate, rate_type: p.rate_type, portfolio: p.portfolio, twitter: p.twitter, github: p.github }) }, [p])
+  function startEdit(profile: Profile) {
+    setEditForm({
+      name: profile.name,
+      bio: profile.bio,
+      skills: profile.skills,
+      rate: profile.rate,
+      rate_type: profile.rate_type,
+      portfolio: profile.portfolio,
+      twitter: profile.twitter,
+      github: profile.github,
+    })
+    setEditMode(true)
+  }
 
   async function saveProfile() {
     if (!address || !p) return
     setEditStatus('saving')
     try {
-      await writeContract(address, 'update_profile', [editForm.name, editForm.bio, editForm.skills, editForm.rate, editForm.rate_type, editForm.portfolio, editForm.twitter, editForm.github])
+      await writeContract(address, 'update_profile', [editForm.name || '', editForm.bio || '', editForm.skills || '', editForm.rate || '', editForm.rate_type || 'fixed', editForm.portfolio || '', editForm.twitter || '', editForm.github || ''])
       setEditStatus('done'); setEditMode(false); setTimeout(refetchProfile, 2000)
-    } catch (e: any) { setEditStatus('error') }
+    } catch { setEditStatus('error') }
   }
 
-  const JobRow = ({ job }: { job: any }) => (
+  const JobRow = ({ job }: { job: Job }) => (
     <div className="card" style={{ padding: '13px 17px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }} onClick={() => router.push(`/job/${job.job_id}`)}>
       <div style={{ width: 7, height: 7, borderRadius: '50%', background: { OPEN:'#8B35FF',FUNDED:'#00D4FF',SUBMITTED:'#FFB830',PAID:'#00E5A0',DISPUTED:'#FF4D6A',REFUNDED:'#8A9BC1',CANCELLED:'#8A9BC1' }[job.status as string] || '#8A9BC1', flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <p className="font-display" style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3 }}>{job.title}</p>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <StatusBadge status={job.status} />
+          <StatusBadge status={job.status || 'UNKNOWN'} />
           {job.created_at && <span style={{ fontSize: 11, color: 'var(--muted)' }}>{timeAgo(job.created_at)}</span>}
         </div>
       </div>
       <div style={{ textAlign: 'right', flexShrink: 0 }}>
-        <p style={{ fontSize: 12, fontWeight: 600, color: BigInt(job.escrow_balance || '0') > 0n ? 'var(--cyan)' : 'var(--muted)' }}>{formatGEN(job.escrow_balance || '0')}</p>
+        <p style={{ fontSize: 12, fontWeight: 600, color: BigInt(job.escrow_balance || '0') > BigInt(0) ? 'var(--cyan)' : 'var(--muted)' }}>{formatGEN(job.escrow_balance || '0')}</p>
         <p style={{ fontSize: 10, color: 'var(--muted)' }}>→</p>
       </div>
     </div>
@@ -103,7 +115,7 @@ export default function DashboardPage() {
                   <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 14 }}>No jobs yet.</p>
                   {p.role === 'client' && <button className="btn-primary" style={{ padding: '10px 20px', fontSize: 13 }} onClick={() => router.push('/marketplace')}>Browse Freelancers →</button>}
                 </div>
-              ) : allJobs.map((j: any) => <JobRow key={j.job_id} job={j} />)}
+              ) : allJobs.map((j) => <JobRow key={j.job_id} job={j} />)}
             </>
           )}
 
@@ -128,7 +140,7 @@ export default function DashboardPage() {
                       Your role is locked on-chain. To operate as a {p.role === 'freelancer' ? 'client' : 'freelancer'}, connect a different wallet and create a new profile.
                     </p>
                   </div>
-                  <button className="btn-outline" style={{ padding: '10px', fontSize: 13 }} onClick={() => setEditMode(true)}>Edit Profile</button>
+                  <button className="btn-outline" style={{ padding: '10px', fontSize: 13 }} onClick={() => startEdit(p)}>Edit Profile</button>
                 </>
               ) : (
                 <>
@@ -142,9 +154,9 @@ export default function DashboardPage() {
                     <div key={k}>
                       <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block', marginBottom: 5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase' }}>{label}</label>
                       {ta ? (
-                        <textarea className="input" style={{ padding: '10px 13px', fontSize: 13 }} value={editForm[k] || ''} onChange={e => setEditForm((f: any) => ({ ...f, [k]: e.target.value }))} />
+                        <textarea className="input" style={{ padding: '10px 13px', fontSize: 13 }} value={String(editForm[k as keyof Profile] || '')} onChange={e => setEditForm(f => ({ ...f, [k]: e.target.value }))} />
                       ) : (
-                        <input className="input" style={{ padding: '10px 13px', fontSize: 13 }} value={editForm[k] || ''} onChange={e => setEditForm((f: any) => ({ ...f, [k]: e.target.value }))} />
+                        <input className="input" style={{ padding: '10px 13px', fontSize: 13 }} value={String(editForm[k as keyof Profile] || '')} onChange={e => setEditForm(f => ({ ...f, [k]: e.target.value }))} />
                       )}
                     </div>
                   ))}

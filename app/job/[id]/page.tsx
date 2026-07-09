@@ -23,7 +23,10 @@ export default function JobPage() {
   async function doAction(label: string, fn: () => Promise<string>) {
     setTxStatus('pending'); setTxLabel(label); setErrMsg('')
     try { await fn(); setTxStatus('done'); setTimeout(refetch, 2000) }
-    catch (e: any) { setTxStatus('error'); setErrMsg((e?.message || '').slice(0, 200)) }
+    catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      setTxStatus('error'); setErrMsg(message.slice(0, 200))
+    }
   }
 
   if (loading) return <>
@@ -45,7 +48,8 @@ export default function JobPage() {
 
   const isClient = address?.toLowerCase() === job.client?.toLowerCase()
   const isFreelancer = address?.toLowerCase() === job.freelancer?.toLowerCase()
-  const hasBalance = BigInt(job.escrow_balance || '0') > 0n
+  const jobStatus = job.status || 'UNKNOWN'
+  const hasBalance = BigInt(job.escrow_balance || '0') > BigInt(0)
   const verdictColor = job.ai_verdict === 'APPROVED' ? 'var(--green)' : job.ai_verdict === 'REJECTED' ? 'var(--red)' : 'var(--muted)'
 
   return (
@@ -63,12 +67,12 @@ export default function JobPage() {
         <div className="fade-in" style={{ marginBottom: 18 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap' }}>
             <h1 className="font-display" style={{ fontSize: 'clamp(16px,3vw,22px)', fontWeight: 700, letterSpacing: '-0.01em', flex: 1 }}>{job.title}</h1>
-            <StatusBadge status={job.status} />
+            <StatusBadge status={jobStatus} />
           </div>
           <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.7, marginBottom: 12 }}>{job.description}</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            <span className="address-chip">client: {shortAddress(job.client)}</span>
-            <span className="address-chip">freelancer: {shortAddress(job.freelancer)}</span>
+            <span className="address-chip">client: {shortAddress(job.client || '')}</span>
+            <span className="address-chip">freelancer: {shortAddress(job.freelancer || '')}</span>
             {job.deadline && <span className="address-chip">due: {job.deadline}</span>}
             {job.created_at && <span className="address-chip">{timeAgo(job.created_at)}</span>}
           </div>
@@ -106,12 +110,12 @@ export default function JobPage() {
 
         {/* TX feedback */}
         {txStatus === 'pending' && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, padding: '12px 16px', background: 'rgba(139,53,255,0.08)', border: '1px solid rgba(139,53,255,0.2)', borderRadius: 10 }}><div className="spinner" /><p style={{ fontSize: 13, color: 'var(--purple)' }}>{txLabel}...</p></div>}
-        {txStatus === 'done' && <div style={{ marginBottom: 12, padding: '12px 16px', background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', borderRadius: 10, fontSize: 13, color: 'var(--green)' }}>✓ Done</div>}
+        {txStatus === 'done' && <div style={{ marginBottom: 12, padding: '12px 16px', background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', borderRadius: 10, fontSize: 13, color: 'var(--green)', lineHeight: 1.5 }}>Submitted and accepted on Bradbury. Finalization may still be pending; GenExplorer can show accepted (undetermined) during the finalization window.</div>}
         {errMsg && <div style={{ marginBottom: 12, padding: '12px 16px', background: 'rgba(255,77,106,0.08)', border: '1px solid rgba(255,77,106,0.2)', borderRadius: 10, fontSize: 13, color: 'var(--red)', wordBreak: 'break-word' }}>{errMsg}</div>}
 
         {/* Actions */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {isClient && job.status === 'OPEN' && (
+          {isClient && jobStatus === 'OPEN' && (
             <div className="panel" style={{ padding: '16px 18px' }}>
               <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>💰 Fund Escrow</p>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -120,7 +124,7 @@ export default function JobPage() {
               </div>
             </div>
           )}
-          {isFreelancer && job.status === 'FUNDED' && (
+          {isFreelancer && jobStatus === 'FUNDED' && (
             <div className="panel" style={{ padding: '16px 18px' }}>
               <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>📎 Submit Work</p>
               <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>Any public URL — GitHub, live app, doc, Figma</p>
@@ -128,19 +132,19 @@ export default function JobPage() {
               <button className="btn-primary" style={{ padding: '11px', fontSize: 14, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }} onClick={() => doAction('Submitting', () => writeContract(address!, 'submit_work', [id, deliverableUrl]))} disabled={!deliverableUrl.startsWith('http') || txStatus === 'pending'}>Submit Work →</button>
             </div>
           )}
-          {isClient && job.status === 'SUBMITTED' && (
+          {isClient && jobStatus === 'SUBMITTED' && (
             <div className="panel" style={{ padding: '16px 18px', borderColor: 'rgba(139,53,255,0.3)', background: 'rgba(139,53,255,0.04)' }}>
               <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>🤖 Verify with AI</p>
-              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>5 validators fetch the deliverable and check it against your job description. Approved → payment auto-releases.</p>
+              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>GenLayer evaluates the deliverable URL against the job description. If the accepted contract result approves it, escrow is released to the freelancer; if rejected, the job enters DISPUTED.</p>
               <button className="btn-primary" style={{ padding: '12px', fontSize: 15, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={() => doAction('AI verifying', () => writeContract(address!, 'verify_and_release', [id]))} disabled={txStatus === 'pending'}>
-                {txStatus === 'pending' ? <><div className="spinner" />Verifying...</> : '⚡ Verify & Release'}
+                {txStatus === 'pending' ? <><div className="spinner" />Verifying...</> : 'Verify & Release'}
               </button>
             </div>
           )}
-          {isClient && ['DISPUTED', 'FUNDED'].includes(job.status) && (
+          {isClient && ['DISPUTED', 'FUNDED'].includes(jobStatus) && (
             <button className="btn-danger" style={{ padding: '12px', fontSize: 14 }} onClick={() => doAction('Refunding', () => writeContract(address!, 'client_refund', [id]))} disabled={txStatus === 'pending'}>Refund Escrowed GEN</button>
           )}
-          {isClient && job.status === 'OPEN' && (
+          {isClient && jobStatus === 'OPEN' && (
             <button className="btn-outline" style={{ padding: '10px', fontSize: 13, opacity: 0.6 }} onClick={() => doAction('Cancelling', () => writeContract(address!, 'cancel_job', [id]))} disabled={txStatus === 'pending'}>Cancel Job</button>
           )}
         </div>

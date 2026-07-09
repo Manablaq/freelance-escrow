@@ -28,7 +28,7 @@ export default function MarketplacePage() {
             <h1 className="font-display" style={{ fontSize: 'clamp(28px,5vw,48px)', fontWeight: 800, letterSpacing: '-0.03em', marginBottom: 10 }}>
               Find Your <span className="glow-text">Freelancer</span>
             </h1>
-            <p style={{ color: 'var(--muted)', fontSize: 15 }}>Browse verified freelancers. AI verifies every delivery.</p>
+            <p style={{ color: 'var(--muted)', fontSize: 15 }}>Browse registered freelancers. Submitted work can be evaluated by the GenLayer contract before escrow release.</p>
           </div>
 
           {/* Search */}
@@ -48,8 +48,8 @@ export default function MarketplacePage() {
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-              {filtered.map((fl: any, i: number) => (
-                <div key={i} className="card fade-up" style={{ padding: '22px', cursor: 'pointer', animationDelay: `${i * 0.05}s` }} onClick={() => router.push(`/freelancer/${fl.address}`)}>
+              {filtered.map((fl, i) => (
+                <div key={i} className="card fade-up" style={{ padding: '22px', cursor: 'pointer', animationDelay: `${i * 0.05}s` }} onClick={() => router.push(`/freelancer/${fl.address || ''}`)}>
                   {/* Header */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
                     <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'var(--grad)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, color: 'white', flexShrink: 0 }}>
@@ -57,7 +57,7 @@ export default function MarketplacePage() {
                     </div>
                     <div style={{ minWidth: 0 }}>
                       <p className="font-display" style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fl.name}</p>
-                      <p style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'JetBrains Mono, monospace' }}>{shortAddress(fl.address)}</p>
+                      <p style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'JetBrains Mono, monospace' }}>{shortAddress(fl.address || '')}</p>
                     </div>
                   </div>
 
@@ -76,7 +76,7 @@ export default function MarketplacePage() {
                   {/* Rate + hire */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     {fl.rate && <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--orange)' }}>{fl.rate} GEN <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>/ {fl.rate_type}</span></p>}
-                    <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 12 }} onClick={e => { e.stopPropagation(); router.push(`/freelancer/${fl.address}`) }}>
+                    <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 12 }} onClick={e => { e.stopPropagation(); router.push(`/freelancer/${fl.address || ''}`) }}>
                       Hire →
                     </button>
                   </div>
