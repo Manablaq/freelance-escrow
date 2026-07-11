@@ -64,9 +64,14 @@ Bradbury transactions are shown after accepted state. GenExplorer may show accep
 
 `verify_and_release` uses GenLayer nondeterminism and the equivalence principle:
 
-- It fetches the submitted deliverable URL with `gl.nondet.web.get`.
-- It asks for a JSON approval decision with `gl.eq_principle.prompt_non_comparative`.
-- The prompt compares the deliverable content and URL context against the job title and description.
+- A module-level nondeterministic helper receives job context as an explicit serialized JSON value. It does not close over contract storage, `self`, the job record, or method-local values.
+- Each validator fetches bounded content from the submitted URL with `gl.nondet.web.get` and independently evaluates it with `gl.nondet.exec_prompt`.
+- `gl.eq_principle.prompt_comparative` compares the stable settlement fields: `approved` must match exactly, scores must be bounded from 0–100 and differ by no more than 10 points, and approval requires a score of at least 70. Explanations may differ.
+- Evaluation covers the job title, job description, stored requirements (the description for records created by the current ABI), deliverable URL, an optional stored submission description, and the fetched page evidence.
+- Page instructions are treated as untrusted. Inaccessible, empty, login-gated, unrelated, placeholder-only, insufficient, or malformed evidence fails closed and cannot release escrow.
+- Only the bounded verdict, score, reason, and evidence summary are returned; fetched webpage content is not persisted.
+
+These source changes address semantic-consensus and closure-serialization review findings. The deployed address listed above predates these source changes and does not contain them; a new contract deployment is required before they can be used on-chain. The frontend contract address has intentionally not been changed.
 
 This is an AI-assisted escrow decision, not a legal ruling, guarantee of fairness, or proof of objective truth. Clear job descriptions and accessible deliverable URLs matter.
 
@@ -92,6 +97,7 @@ Open the local URL printed by Next.js and connect a wallet configured for GenLay
 ## Testing
 
 ```bash
+python3 -m unittest discover -s tests -v
 npm run lint
 npm run build
 npm audit
