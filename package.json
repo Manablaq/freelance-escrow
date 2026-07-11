@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "inspect:deployment": "node scripts/inspect-freelance-market.mjs",
+    "smoke:approval": "node scripts/smoke-freelance-market.mjs approval",
+    "smoke:rejection": "node scripts/smoke-freelance-market.mjs rejection"
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.11",

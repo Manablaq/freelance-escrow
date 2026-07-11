@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/.smoke-freelance-market.*
 
 # next.js
 /.next/
