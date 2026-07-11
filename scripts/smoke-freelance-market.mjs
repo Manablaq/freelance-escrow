@@ -103,6 +103,131 @@ function equalData(left, right) {
   return JSON.stringify(stable(left)) === JSON.stringify(stable(right));
 }
 
+const VERIFY_STEP = "verify_and_release";
+const VERIFY_RETRY_PATTERN = /^verify_and_release_retry_([1-9]\d*)$/;
+
+export function verificationAttempts(journal) {
+  const attempts = [];
+  if (journal.steps?.[VERIFY_STEP]) attempts.push({ name: VERIFY_STEP, number: 0, step: journal.steps[VERIFY_STEP] });
+  for (const [name, step] of Object.entries(journal.steps ?? {})) {
+    const match = VERIFY_RETRY_PATTERN.exec(name);
+    if (match) attempts.push({ name, number: Number(match[1]), step });
+  }
+  attempts.sort((left, right) => left.number - right.number);
+  return attempts;
+}
+
+export function latestVerificationAttempt(journal) {
+  return verificationAttempts(journal).at(-1) ?? null;
+}
+
+export function nextVerifyRetryStepName(journal) {
+  const attempts = verificationAttempts(journal);
+  if (!attempts.length) throw new Error("VERIFY_RETRY_NO_PREVIOUS_ATTEMPT");
+  return `verify_and_release_retry_${attempts.at(-1).number + 1}`;
+}
+
+function isStrictSuccessEvidence(step) {
+  return step?.status === "EXECUTION_CONFIRMED" &&
+    SUCCESS_STATUSES.has(step.execution?.status_name) &&
+    SUCCESS_RESULTS.has(step.execution?.result_name) &&
+    step.execution?.execution_result_name === ExecutionResult.FINISHED_WITH_RETURN;
+}
+
+export function selectVerifySuccessStep(journal) {
+  const pointer = journal.state?.verify_success_step;
+  if (pointer !== undefined) {
+    const pointed = verificationAttempts(journal).find(({ name }) => name === pointer);
+    if (!pointed || !isStrictSuccessEvidence(pointed.step)) throw new Error("VERIFY_SUCCESS_POINTER_INVALID");
+    return pointed;
+  }
+  const original = journal.steps?.[VERIFY_STEP];
+  if (isStrictSuccessEvidence(original)) return { name: VERIFY_STEP, number: 0, step: original };
+  throw new Error("VERIFY_SUCCESS_POINTER_REQUIRED");
+}
+
+export function assertRetryAuthorization(journal, authorizedHash) {
+  const latest = latestVerificationAttempt(journal);
+  if (!latest) throw new Error("VERIFY_RETRY_NO_PREVIOUS_ATTEMPT");
+  if (isStrictSuccessEvidence(latest.step)) throw new Error("VERIFY_ALREADY_SUCCESSFUL");
+  if (latest.step.status === "INTENT_RECORDED" && !latest.step.hash) throw new Error(`AMBIGUOUS_BROADCAST ${latest.name}`);
+  if (!authorizedHash) throw new Error("VERIFY_RETRY_REQUIRED");
+  if (authorizedHash !== latest.step.hash) throw new Error("VERIFY_RETRY_HASH_MISMATCH");
+  return latest;
+}
+
+export function assertRetryJobPreconditions({ journal, job, config, jobId, escrowWei }) {
+  if (job?.found !== true) throw new Error("VERIFY_RETRY_JOB_NOT_FOUND");
+  if (String(job.job_id) !== String(jobId)) throw new Error("VERIFY_RETRY_JOB_ID_MISMATCH");
+  if (!jobIdentityMatches(job, config)) throw new Error("VERIFY_RETRY_JOB_IDENTITY_MISMATCH");
+  if (job.deliverable_url !== config.deliverable_url) throw new Error("VERIFY_RETRY_DELIVERABLE_URL_MISMATCH");
+  if (job.status !== "SUBMITTED") throw new Error("VERIFY_RETRY_STATUS_MISMATCH");
+  if (BigInt(job.escrow_balance) !== escrowWei) throw new Error("VERIFY_RETRY_ESCROW_MISMATCH");
+  if (job.ai_verdict !== "") throw new Error("VERIFY_RETRY_VERDICT_NOT_EMPTY");
+  if (job.ai_reasoning !== "") throw new Error("VERIFY_RETRY_REASONING_NOT_EMPTY");
+  if (job.resolved_at !== "") throw new Error("VERIFY_RETRY_RESOLVED_AT_NOT_EMPTY");
+  if (journal.steps.client_refund) throw new Error("VERIFY_RETRY_REFUND_STEP_PRESENT");
+  if (verificationAttempts(journal).some(({ step }) => isStrictSuccessEvidence(step))) throw new Error("VERIFY_ALREADY_SUCCESSFUL");
+  return job;
+}
+
+function exactReceiptTuple(transaction) {
+  const fields = [transaction?.statusName, transaction?.resultName, transaction?.txExecutionResultName];
+  if (fields.some((value) => typeof value !== "string" || value.length === 0)) {
+    throw new Error("VERIFY_RETRY_RECEIPT_MALFORMED");
+  }
+  if (!Object.values(TransactionStatus).includes(fields[0]) ||
+      !Object.values(TransactionResult).includes(fields[1]) ||
+      !Object.values(ExecutionResult).includes(fields[2])) {
+    throw new Error("VERIFY_RETRY_RECEIPT_MALFORMED");
+  }
+  return { status_name: fields[0], result_name: fields[1], execution_result_name: fields[2] };
+}
+
+export async function prepareVerifyRetry({ journal, authorizedHash, getTransaction, readJob, save, escrowWei, now = () => new Date().toISOString() }) {
+  const latest = assertRetryAuthorization(journal, authorizedHash);
+  const transaction = await getTransaction(latest.step.hash);
+  const execution = exactReceiptTuple(transaction);
+  const classification = classifyTransaction(transaction);
+  if (classification.kind === "PENDING") throw new Error("VERIFY_RETRY_PREVIOUS_PENDING");
+  if (classification.kind === "SUCCESS") throw new Error("VERIFY_RETRY_PREVIOUS_SUCCESSFUL");
+  if (classification.kind !== "FAILURE") throw new Error("VERIFY_RETRY_PREVIOUS_NOT_TERMINAL_FAILURE");
+  const jobId = journal.state?.job_id;
+  if (jobId === undefined || jobId === null || jobId === "") throw new Error("VERIFY_RETRY_JOB_ID_MISSING");
+  const job = await readJob(jobId);
+  assertRetryJobPreconditions({ journal, job, config: journal.config, jobId, escrowWei });
+  latest.step.status = "TERMINAL_FAILURE_CONFIRMED";
+  latest.step.execution = execution;
+  latest.step.terminal_failure_confirmed_at = now();
+  await save(journal);
+  return { previous: latest, job, jobId, stepName: nextVerifyRetryStepName(journal) };
+}
+
+export async function executeVerifyRetry({ journal, authorizedHash, getTransaction, readJob, save, escrowWei,
+  loadClientAccount, createWriter, wait, now }) {
+  const prepared = await prepareVerifyRetry({ journal, authorizedHash, getTransaction, readJob, save, escrowWei, now });
+  const account = loadClientAccount();
+  if (!sameAddress(account.address, journal.config.client_address)) throw new Error("CLIENT_PRIVATE_KEY does not match CLIENT_ADDRESS");
+  const writer = createWriter(account);
+  await submitStep({ journal, stepName: prepared.stepName, client: writer, sender: journal.config.client_address, save, wait, request: {
+    address: journal.config.contract_address, functionName: "verify_and_release", args: [prepared.jobId], value: 0n,
+  } });
+  journal.state.verify_success_step = prepared.stepName;
+  await save(journal);
+  return prepared.stepName;
+}
+
+export function formatVerificationAttempts(journal) {
+  return verificationAttempts(journal).map(({ name, step }) => ({
+    step_name: name,
+    hash: step.hash ?? null,
+    journal_status: step.status,
+    status_name: step.execution?.status_name ?? null,
+    result_name: step.execution?.result_name ?? null,
+    execution_result_name: step.execution?.execution_result_name ?? null,
+  }));
+}
+
 export function validateDeliverableUrl(deliverableUrl) {
   if (typeof deliverableUrl !== "string") {
     throw new Error("DELIVERABLE_URL_INVALID: expected a string containing an absolute http(s) URL");
@@ -374,7 +499,7 @@ function assertVerificationEvidence({ journal, job, config, jobId, escrowWei }) 
       fundedJob.status !== "FUNDED" || BigInt(fundedJob.escrow_balance) !== escrowWei) {
     throw new Error("FUNDED_JOB_EVIDENCE_MISMATCH");
   }
-  const step = journal.steps.verify_and_release;
+  const { step } = selectVerifySuccessStep(journal);
   const expectedRequest = {
     sender: config.client_address,
     address: config.contract_address,
@@ -441,6 +566,33 @@ async function run() {
   const readClient = createClient({ chain: testnetBradbury });
   const read = async (functionName, args = []) => parseView(functionName, await readClient.readContract({ address: CONTRACT_ADDRESS, functionName, args }));
   const wait = (hash) => waitForSuccessfulExecution(readClient, hash, { attempts: receiptAttempts, intervalMs });
+
+  if (verificationAttempts(journal).length) {
+    try {
+      const latest = latestVerificationAttempt(journal);
+      if (isStrictSuccessEvidence(latest.step)) {
+        journal.state.verify_success_step ??= latest.name;
+        await save(journal);
+      } else {
+        await executeVerifyRetry({
+          journal,
+          authorizedHash: process.env.SMOKE_RETRY_VERIFY_FROM_HASH,
+          getTransaction: (hash) => readClient.getTransaction({ hash }),
+          readJob: (jobId) => read("get_job", [jobId]),
+          save,
+          escrowWei,
+          loadClientAccount: () => createAccount(required("CLIENT_PRIVATE_KEY")),
+          createWriter: (account) => createClient({ chain: testnetBradbury, account }),
+          wait,
+        });
+      }
+    } finally {
+      console.log("Verification attempts:");
+      console.log(JSON.stringify(formatVerificationAttempts(journal), null, 2));
+    }
+    await finishRun({ flow, journal, save, read, pollAttempts: attempts, intervalMs, escrowWei });
+    return;
+  }
 
   const clientAccount = createAccount(required("CLIENT_PRIVATE_KEY"));
   const freelancerAccount = createAccount(required("FREELANCER_PRIVATE_KEY"));
@@ -527,10 +679,20 @@ async function run() {
   await submitStep({ journal, stepName: "verify_and_release", client, sender: CLIENT_ADDRESS, save, wait, request: {
     address: CONTRACT_ADDRESS, functionName: "verify_and_release", args: [jobId], value: 0n,
   } });
+  journal.state.verify_success_step = "verify_and_release";
+  await save(journal);
+  await finishRun({ flow, journal, save, read, pollAttempts: attempts, intervalMs, escrowWei });
+}
+
+async function finishRun({ flow, journal, save, read, pollAttempts, intervalMs, escrowWei }) {
+  const config = journal.config;
+  const jobId = journal.state.job_id;
   const finalJob = await pollState(() => read("get_job", [jobId]), (job) => flow === "approval"
     ? job.status === "PAID" && job.ai_verdict === "APPROVED" && BigInt(job.escrow_balance) === 0n
     : job.status === "DISPUTED" && job.ai_verdict === "REJECTED" && BigInt(job.escrow_balance) === escrowWei,
-  `final ${flow} state`, attempts, intervalMs);
+  `final ${flow} state`, pollAttempts, intervalMs);
+  const beforeStats = journal.state.before_stats;
+  const beforeProfile = journal.state.before_freelancer_profile;
   const afterStats = await read("get_stats");
   const afterProfile = await read("get_profile", [FREELANCER_ADDRESS]);
   const accounting = { journal, job: finalJob, config, jobId, beforeStats, afterStats, beforeProfile, afterProfile, escrowWei };
@@ -544,6 +706,8 @@ async function run() {
   await save(journal);
   console.log(`Smoke ${flow} run ${config.run_id} completed. Transaction hashes:`);
   console.log(JSON.stringify(Object.fromEntries(Object.entries(journal.steps).filter(([, step]) => step.hash).map(([name, step]) => [name, step.hash])), null, 2));
+  console.log("Verification attempts:");
+  console.log(JSON.stringify(formatVerificationAttempts(journal), null, 2));
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

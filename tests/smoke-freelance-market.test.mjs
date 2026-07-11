@@ -11,7 +11,12 @@ import {
   assertRejectionAccounting,
   buildMarkedJobFields,
   classifyTransaction,
+  executeVerifyRetry,
+  latestVerificationAttempt,
+  nextVerifyRetryStepName,
+  prepareVerifyRetry,
   publicRequestMetadata,
+  selectVerifySuccessStep,
   selectUniqueJob,
   submitStep,
   validateDeliverableUrl,
@@ -327,7 +332,7 @@ test("verification evidence requires exact request and confirmed successful exec
   assert.throws(() => assertApprovalAccounting(wrongRequest), /VERIFY_REQUEST_MISMATCH/);
   const missingConfirmation = accountingInput("approval");
   missingConfirmation.journal.steps.verify_and_release.status = "HASH_RECORDED";
-  assert.throws(() => assertApprovalAccounting(missingConfirmation), /VERIFY_EXECUTION_NOT_CONFIRMED/);
+  assert.throws(() => assertApprovalAccounting(missingConfirmation), /VERIFY_SUCCESS_POINTER_REQUIRED/);
 });
 
 test("recorded verification evidence accepts MAJORITY_AGREE and rejects MAJORITY_DISAGREE", () => {
@@ -336,7 +341,7 @@ test("recorded verification evidence accepts MAJORITY_AGREE and rejects MAJORITY
   assert.doesNotThrow(() => assertApprovalAccounting(majorityAgree));
   const majorityDisagree = accountingInput("approval");
   majorityDisagree.journal.steps.verify_and_release.execution.result_name = "MAJORITY_DISAGREE";
-  assert.throws(() => assertApprovalAccounting(majorityDisagree), /VERIFY_EXECUTION_OUTCOME_MISMATCH/);
+  assert.throws(() => assertApprovalAccounting(majorityDisagree), /VERIFY_SUCCESS_POINTER_REQUIRED/);
 });
 
 test("approval and rejection retain exact job escrow assertions", () => {
@@ -359,4 +364,161 @@ test("journal request metadata excludes private keys", () => {
   const metadata = publicRequestMetadata({ address: "0xcontract", functionName: "fund", args: ["1"], value: 1n, account: { privateKey: secret } }, "0xclient");
   assert.equal(JSON.stringify(metadata).includes(secret), false);
   assert.deepEqual(Object.keys(metadata).sort(), ["address", "args", "functionName", "sender", "value"]);
+});
+
+const terminalFailure = { statusName: "LEADER_TIMEOUT", resultName: "IDLE", txExecutionResultName: "NOT_VOTED" };
+
+function retryJob(overrides = {}) {
+  return { ...matchingJob("2"), status: "SUBMITTED", escrow_balance: "1",
+    deliverable_url: config.deliverable_url, ai_verdict: "", ai_reasoning: "", resolved_at: "", ...overrides };
+}
+
+function retryJournal(extraSteps = {}, state = {}) {
+  return journal({ steps: { verify_and_release: {
+    status: "HASH_RECORDED", hash: "0xfailed", request: {
+      sender: config.client_address, address: config.contract_address,
+      functionName: "verify_and_release", args: ["2"], value: "0",
+    }, created_at: "created", hash_recorded_at: "recorded",
+  }, ...extraSteps }, state: { job_id: "2", ...state } });
+}
+
+function retryDependencies(value, overrides = {}) {
+  let writes = 0;
+  let keyLoads = 0;
+  let freelancerKeyLoads = 0;
+  const dependencies = {
+    journal: value, authorizedHash: "0xfailed", escrowWei: 1n,
+    getTransaction: async () => terminalFailure,
+    readJob: async () => retryJob(),
+    save: async () => {},
+    loadClientAccount: () => { keyLoads += 1; return { address: config.client_address }; },
+    loadFreelancerAccount: () => { freelancerKeyLoads += 1; throw new Error("must not load"); },
+    createWriter: () => ({ writeContract: async () => { writes += 1; return "0xretry"; } }),
+    wait: async () => success,
+    now: () => "confirmed-at",
+    ...overrides,
+  };
+  return { dependencies, counts: () => ({ writes, keyLoads, freelancerKeyLoads }) };
+}
+
+test("manual authorization is exact and missing or wrong hashes perform zero writes", async () => {
+  for (const [authorizedHash, error] of [[undefined, /VERIFY_RETRY_REQUIRED/], ["0xwrong", /VERIFY_RETRY_HASH_MISMATCH/]]) {
+    const value = retryJournal();
+    const fixture = retryDependencies(value, { authorizedHash });
+    await assert.rejects(executeVerifyRetry(fixture.dependencies), error);
+    assert.deepEqual(fixture.counts(), { writes: 0, keyLoads: 0, freelancerKeyLoads: 0 });
+  }
+});
+
+test("pending, successful, and malformed previous receipts perform zero writes", async () => {
+  for (const [transaction, error] of [
+    [{ statusName: "REVEALING", resultName: "IDLE", txExecutionResultName: "NOT_VOTED" }, /PREVIOUS_PENDING/],
+    [success, /PREVIOUS_SUCCESSFUL/],
+    [{ statusName: "LEADER_TIMEOUT", resultName: "IDLE" }, /RECEIPT_MALFORMED/],
+  ]) {
+    const fixture = retryDependencies(retryJournal(), { getTransaction: async () => transaction });
+    await assert.rejects(executeVerifyRetry(fixture.dependencies), error);
+    assert.deepEqual(fixture.counts(), { writes: 0, keyLoads: 0, freelancerKeyLoads: 0 });
+  }
+});
+
+test("exact terminal failure and exact SUBMITTED job permit one durable numbered write", async () => {
+  const value = retryJournal();
+  const original = structuredClone(value.steps.verify_and_release);
+  const saves = [];
+  const fixture = retryDependencies(value, { save: async (current) => saves.push(structuredClone(current)) });
+  const stepName = await executeVerifyRetry(fixture.dependencies);
+  assert.equal(stepName, "verify_and_release_retry_1");
+  assert.deepEqual(fixture.counts(), { writes: 1, keyLoads: 1, freelancerKeyLoads: 0 });
+  assert.equal(value.steps.verify_and_release.hash, original.hash);
+  assert.deepEqual(value.steps.verify_and_release.request, original.request);
+  assert.equal(value.steps.verify_and_release.created_at, original.created_at);
+  assert.equal(value.steps.verify_and_release.hash_recorded_at, original.hash_recorded_at);
+  assert.deepEqual(value.steps.verify_and_release.execution, {
+    status_name: "LEADER_TIMEOUT", result_name: "IDLE", execution_result_name: "NOT_VOTED",
+  });
+  assert.equal(value.steps.verify_and_release.terminal_failure_confirmed_at, "confirmed-at");
+  assert.equal(value.steps.verify_and_release.status, "TERMINAL_FAILURE_CONFIRMED");
+  assert.equal(value.steps.verify_and_release_retry_1.hash, "0xretry");
+  assert.equal(value.state.verify_success_step, "verify_and_release_retry_1");
+  assert.equal(saves.some((saved) => saved.steps.verify_and_release_retry_1?.status === "INTENT_RECORDED"), true);
+});
+
+test("retry numbering uses latest numbered attempt and never an older hash", () => {
+  const value = retryJournal({
+    verify_and_release_retry_2: { status: "HASH_RECORDED", hash: "0xlatest" },
+    verify_and_release_retry_1: { status: "TERMINAL_FAILURE_CONFIRMED", hash: "0xolder" },
+  });
+  assert.equal(latestVerificationAttempt(value).step.hash, "0xlatest");
+  assert.equal(nextVerifyRetryStepName(value), "verify_and_release_retry_3");
+});
+
+test("failed retry requires its own explicit hash and rerun never broadcasts automatically", async () => {
+  const value = retryJournal({ verify_and_release_retry_1: { status: "HASH_RECORDED", hash: "0xretry-failed", request: {} } });
+  const fixture = retryDependencies(value, { authorizedHash: undefined });
+  await assert.rejects(executeVerifyRetry(fixture.dependencies), /VERIFY_RETRY_REQUIRED/);
+  assert.equal(fixture.counts().writes, 0);
+  const wrong = retryDependencies(value, { authorizedHash: "0xfailed" });
+  await assert.rejects(executeVerifyRetry(wrong.dependencies), /VERIFY_RETRY_HASH_MISMATCH/);
+  assert.equal(wrong.counts().writes, 0);
+});
+
+test("all read-only job checks precede key loading", async () => {
+  const mutations = [
+    ["deliverable_url", "https://example.test/changed", /URL_MISMATCH/], ["escrow_balance", "2", /ESCROW_MISMATCH/],
+    ["status", "PAID", /STATUS_MISMATCH/], ["ai_verdict", "APPROVED", /VERDICT_NOT_EMPTY/],
+    ["ai_reasoning", "reason", /REASONING_NOT_EMPTY/], ["resolved_at", "now", /RESOLVED_AT_NOT_EMPTY/],
+    ["title", "changed", /IDENTITY_MISMATCH/], ["job_id", "3", /JOB_ID_MISMATCH/],
+  ];
+  for (const [field, changed, error] of mutations) {
+    const fixture = retryDependencies(retryJournal(), { readJob: async () => retryJob({ [field]: changed }) });
+    await assert.rejects(executeVerifyRetry(fixture.dependencies), error);
+    assert.deepEqual(fixture.counts(), { writes: 0, keyLoads: 0, freelancerKeyLoads: 0 });
+  }
+});
+
+test("ambiguous retry intent restart refuses resubmission", async () => {
+  const value = retryJournal({ verify_and_release_retry_1: { status: "INTENT_RECORDED", request: {} } });
+  const fixture = retryDependencies(value, { authorizedHash: undefined });
+  await assert.rejects(executeVerifyRetry(fixture.dependencies), /AMBIGUOUS_BROADCAST/);
+  assert.equal(fixture.counts().writes, 0);
+});
+
+test("retry write exception retains its new durable intent and is ambiguous", async () => {
+  const value = retryJournal();
+  const savedStatuses = [];
+  const fixture = retryDependencies(value, {
+    save: async (current) => savedStatuses.push(current.steps.verify_and_release_retry_1?.status),
+    createWriter: () => ({ writeContract: async () => { throw new Error("transport disconnected"); } }),
+  });
+  await assert.rejects(executeVerifyRetry(fixture.dependencies), /BROADCAST_RESULT_UNKNOWN verify_and_release_retry_1/);
+  assert.equal(value.steps.verify_and_release_retry_1.status, "INTENT_RECORDED");
+  assert.equal(value.steps.verify_and_release_retry_1.hash, undefined);
+  assert.equal(savedStatuses.includes("INTENT_RECORDED"), true);
+});
+
+test("final evidence follows a valid success pointer and rejects a failed pointer", () => {
+  const input = accountingInput("approval");
+  input.journal.steps.verify_and_release.status = "TERMINAL_FAILURE_CONFIRMED";
+  input.journal.steps.verify_and_release.execution = { status_name: "LEADER_TIMEOUT", result_name: "IDLE", execution_result_name: "NOT_VOTED" };
+  input.journal.steps.verify_and_release_retry_1 = {
+    status: "EXECUTION_CONFIRMED", request: { sender: config.client_address, address: config.contract_address,
+      functionName: "verify_and_release", args: ["2"], value: "0" },
+    execution: { status_name: "FINALIZED", result_name: "MAJORITY_AGREE", execution_result_name: "FINISHED_WITH_RETURN" },
+  };
+  input.journal.state.verify_success_step = "verify_and_release_retry_1";
+  assert.equal(selectVerifySuccessStep(input.journal).name, "verify_and_release_retry_1");
+  assert.doesNotThrow(() => assertApprovalAccounting(input));
+  input.journal.state.verify_success_step = "verify_and_release";
+  assert.throws(() => assertApprovalAccounting(input), /VERIFY_SUCCESS_POINTER_INVALID/);
+});
+
+test("terminal evidence is not persisted until all read-only checks pass", async () => {
+  const value = retryJournal();
+  let saves = 0;
+  await assert.rejects(prepareVerifyRetry({ journal: value, authorizedHash: "0xfailed", escrowWei: 1n,
+    getTransaction: async () => terminalFailure, readJob: async () => retryJob({ client: "0xchanged" }),
+    save: async () => { saves += 1; } }), /IDENTITY_MISMATCH/);
+  assert.equal(saves, 0);
+  assert.equal(value.steps.verify_and_release.status, "HASH_RECORDED");
 });
