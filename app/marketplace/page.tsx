@@ -1,91 +1,184 @@
-'use client'
-import { useCallback, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { TopNav } from '@/components/TopNav'
-import { getAllFreelancers, shortAddress } from '@/lib/genlayer'
-import { usePolling } from '@/hooks/usePolling'
+"use client";
+/* eslint-disable react-hooks/exhaustive-deps -- normalized contract arrays intentionally derive from polling results */
+import { useCallback, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  AppShell,
+  EmptyState,
+  PageHeader,
+  SkeletonGrid,
+} from "@/components/AppShell";
+import { getAllFreelancers, shortAddress, type Profile } from "@/lib/genlayer";
+import { usePolling } from "@/hooks/usePolling";
 
-export default function MarketplacePage() {
-  const router = useRouter()
-  const [search, setSearch] = useState('')
-  const fetcher = useCallback(() => getAllFreelancers(), [])
-  const { data, loading } = usePolling(fetcher, 10000)
-  const freelancers = Array.isArray(data) ? data : []
-  const filtered = freelancers.filter(f => !search || [f.name, f.skills, f.bio].join(' ').toLowerCase().includes(search.toLowerCase()))
-
+const skills = (p: Profile) =>
+  (p.skills || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+export default function Marketplace() {
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const [skill, setSkill] = useState("all");
+  const [sort, setSort] = useState("name");
+  const fetcher = useCallback(() => getAllFreelancers(), []);
+  const { data, loading, error, refetch } = usePolling(fetcher, 10000);
+  const all = Array.isArray(data) ? data : [];
+  const skillOptions = useMemo(
+    () => Array.from(new Set(all.flatMap(skills))).sort(),
+    [all],
+  );
+  const shown = useMemo(
+    () =>
+      all
+        .filter(
+          (p) =>
+            (!search ||
+              [p.name, p.bio, p.skills]
+                .join(" ")
+                .toLowerCase()
+                .includes(search.toLowerCase())) &&
+            (skill === "all" || skills(p).includes(skill)),
+        )
+        .sort((a, b) =>
+          sort === "rate"
+            ? Number(a.rate || 0) - Number(b.rate || 0)
+            : (a.name || "").localeCompare(b.name || ""),
+        ),
+    [all, search, skill, sort],
+  );
   return (
-    <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.5 }} />
-      <div className="orb-purple" style={{ opacity: 0.5 }} />
-
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 48 }}>
-
-          {/* Header */}
-          <div className="fade-up" style={{ marginBottom: 40 }}>
-            <p style={{ fontSize: 11, color: 'var(--purple2)', fontFamily: 'JetBrains Mono, monospace', letterSpacing: '0.14em', marginBottom: 8 }}>0.2 / MARKETPLACE</p>
-            <h1 className="font-display" style={{ fontSize: 'clamp(28px,5vw,48px)', fontWeight: 800, letterSpacing: '-0.03em', marginBottom: 10 }}>
-              Find Your <span className="glow-text">Freelancer</span>
-            </h1>
-            <p style={{ color: 'var(--muted)', fontSize: 15 }}>Browse registered freelancers. Submitted work can be evaluated by the GenLayer contract before escrow release.</p>
+    <AppShell>
+      <section className="section container">
+        <PageHeader
+          eyebrow="Talent marketplace"
+          title={
+            <>
+              Find specialists who <span className="gradient-text">ship.</span>
+            </>
+          }
+          description="Browse freelancer profiles registered on the FreelanceMarket contract. Hire directly into a transparent escrow workflow."
+        />
+        <div className="toolbar">
+          <div className="search-wrap">
+            <span>⌕</span>
+            <input
+              className="input"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, skill, or profile details"
+              aria-label="Search freelancers"
+            />
           </div>
-
-          {/* Search */}
-          <div className="fade-up-d1" style={{ position: 'relative', marginBottom: 32, maxWidth: 440 }}>
-            <input className="input" style={{ padding: '12px 16px 12px 42px', fontSize: 14 }} placeholder="Search by name, skill..." value={search} onChange={e => setSearch(e.target.value)} />
-            <svg style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          </div>
-
-          {/* Grid */}
-          {loading ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" style={{ width: 32, height: 32 }} /></div>
-          ) : filtered.length === 0 ? (
-            <div className="card" style={{ padding: '60px 24px', textAlign: 'center', maxWidth: 400 }}>
-              <p style={{ fontSize: 40, marginBottom: 12 }}>🔍</p>
-              <p style={{ color: 'var(--muted)', marginBottom: 16 }}>{search ? `No results for "${search}"` : 'No freelancers yet. Be the first!'}</p>
-              {!search && <button className="btn-primary" style={{ padding: '10px 22px', fontSize: 14 }} onClick={() => router.push('/register')}>Register as Freelancer</button>}
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-              {filtered.map((fl, i) => (
-                <div key={i} className="card fade-up" style={{ padding: '22px', cursor: 'pointer', animationDelay: `${i * 0.05}s` }} onClick={() => router.push(`/freelancer/${fl.address || ''}`)}>
-                  {/* Header */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'var(--grad)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, color: 'white', flexShrink: 0 }}>
-                      {(fl.name?.[0] || '?').toUpperCase()}
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <p className="font-display" style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fl.name}</p>
-                      <p style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'JetBrains Mono, monospace' }}>{shortAddress(fl.address || '')}</p>
-                    </div>
+          <select
+            className="input"
+            value={skill}
+            onChange={(e) => setSkill(e.target.value)}
+            aria-label="Filter by skill"
+          >
+            <option value="all">All skills</option>
+            {skillOptions.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+          <select
+            className="input"
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+            aria-label="Sort freelancers"
+          >
+            <option value="name">Name A–Z</option>
+            <option value="rate">Rate: low first</option>
+          </select>
+        </div>
+        {loading ? (
+          <SkeletonGrid />
+        ) : error ? (
+          <EmptyState
+            title="Marketplace unavailable"
+            description="The accepted contract state could not be loaded. Your wallet and contract data have not been changed."
+            action={
+              <button
+                className="button secondary"
+                onClick={() => void refetch()}
+              >
+                Try again
+              </button>
+            }
+          />
+        ) : shown.length === 0 ? (
+          <EmptyState
+            title={
+              search || skill !== "all"
+                ? "No matching freelancers"
+                : "No freelancer profiles yet"
+            }
+            description={
+              search || skill !== "all"
+                ? "Adjust your search or skill filter to see more profiles."
+                : "Freelancer profiles will appear here after on-chain registration."
+            }
+            action={
+              !search && skill === "all" ? (
+                <button
+                  className="button primary"
+                  onClick={() => router.push("/register")}
+                >
+                  Create a freelancer profile
+                </button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <div className="card-grid">
+              {shown.map((p, i) => (
+                <article
+                  className="card profile-card"
+                  key={p.address || i}
+                >
+                <div className="profile-head">
+                  <div className="avatar">
+                    {(p.name?.[0] || "?").toUpperCase()}
                   </div>
-
-                  {/* Bio */}
-                  {fl.bio && <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 12, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{fl.bio}</p>}
-
-                  {/* Skills */}
-                  {fl.skills && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 14 }}>
-                      {fl.skills.split(',').slice(0, 3).map((s: string) => (
-                        <span key={s} style={{ fontSize: 10, padding: '3px 8px', background: 'rgba(123,91,255,0.15)', color: 'var(--purple2)', borderRadius: 5, fontWeight: 600 }}>{s.trim()}</span>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Rate + hire */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    {fl.rate && <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--orange)' }}>{fl.rate} GEN <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>/ {fl.rate_type}</span></p>}
-                    <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 12 }} onClick={e => { e.stopPropagation(); router.push(`/freelancer/${fl.address || ''}`) }}>
-                      Hire →
-                    </button>
+                  <div>
+                    <h2>{p.name || "Unnamed freelancer"}</h2>
+                    <code>{shortAddress(p.address || "")}</code>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </>
-  )
+                <p>
+                  {p.bio || "No professional summary has been provided yet."}
+                </p>
+                <div className="skills">
+                  {skills(p)
+                    .slice(0, 4)
+                    .map((s) => (
+                      <span className="skill" key={s}>
+                        {s}
+                      </span>
+                    ))}
+                  {skills(p).length > 4 && (
+                    <span className="skill">+{skills(p).length - 4}</span>
+                  )}
+                </div>
+                <div className="profile-foot">
+                  <div>
+                    <strong>{p.rate || "—"} GEN</strong>
+                    <span>
+                      {p.rate_type ? `per ${p.rate_type}` : "Rate type not set"}
+                    </span>
+                  </div>
+                    <button
+                      className="button secondary compact"
+                      onClick={() => router.push(`/freelancer/${p.address}`)}
+                  >
+                    View profile
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </AppShell>
+  );
 }

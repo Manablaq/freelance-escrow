@@ -1,124 +1,154 @@
-'use client'
-import { useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { useAccount } from 'wagmi'
-import { TopNav } from '@/components/TopNav'
-import { getProfile, shortAddress, formatGEN } from '@/lib/genlayer'
-import { usePolling } from '@/hooks/usePolling'
+"use client";
+import { useCallback } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useAccount } from "wagmi";
+import { AppShell, EmptyState, SkeletonGrid } from "@/components/AppShell";
+import { Address } from "@/components/Web3UI";
+import { formatGEN, getProfile, isAddress } from "@/lib/genlayer";
+import { usePolling } from "@/hooks/usePolling";
 
-export default function FreelancerPage() {
-  const { address: freelancerAddr } = useParams<{ address: string }>()
-  const router = useRouter()
-  const { address: myAddress } = useAccount()
-  const fetcher = useCallback(() => getProfile(freelancerAddr), [freelancerAddr])
-  const { data: profile, loading } = usePolling(fetcher, 10000)
-
-  const isMe = myAddress?.toLowerCase() === freelancerAddr?.toLowerCase()
-
-  if (loading) return <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.35 }} />
-      <div className="orb-purple" style={{ opacity: 0.35 }} />
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 40 }}><div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><div className="spinner" style={{ width: 28, height: 28 }} /></div>        </div>
-      </div>
-    </>
-  if (!profile?.found || profile?.role !== 'freelancer') return (
-    <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.35 }} />
-      <div className="orb-purple" style={{ opacity: 0.35 }} />
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 40 }}>
-      <div style={{ textAlign: 'center', padding: 40 }}>
-        <p style={{ color: 'var(--muted)', marginBottom: 16 }}>Freelancer not found.</p>
-        <button className="btn-outline" style={{ padding: '9px 18px', fontSize: 13 }} onClick={() => router.push('/marketplace')}>← Back to Marketplace</button>
-      </div>
-            </div>
-      </div>
-    </>
-  )
-
-  const skills = profile.skills ? profile.skills.split(',').map((s: string) => s.trim()).filter(Boolean) : []
-  const totalEarned = formatGEN(profile.total_earned || '0')
-
+const external = (value: string, type: "portfolio" | "twitter" | "github") =>
+  type === "portfolio"
+    ? value
+    : type === "twitter"
+      ? `https://x.com/${value.replace("@", "")}`
+      : `https://github.com/${value.replace(/^@/, "")}`;
+export default function FreelancerProfile() {
+  const { address: addr } = useParams<{ address: string }>();
+  const { address: mine } = useAccount();
+  const fetcher = useCallback(() => getProfile(addr), [addr]);
+  const { data: p, loading, error } = usePolling(fetcher, 10000);
+  const me = mine?.toLowerCase() === addr.toLowerCase();
+  const skills = (p?.skills || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
   return (
-    <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.35 }} />
-      <div className="orb-purple" style={{ opacity: 0.35 }} />
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 40 }}>
-      <div style={{ maxWidth: 540 }}>
-        <button onClick={() => router.back()} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 5 }}>← Back</button>
-
-        {/* Profile header */}
-        <div className="card fade-in" style={{ padding: '24px 22px', marginBottom: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-            <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--grad)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, color: 'white', flexShrink: 0, boxShadow: 'var(--gp)' }}>
-              {(profile.name?.[0] || '?').toUpperCase()}
-            </div>
-            <div>
-              <h1 className="font-display" style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.01em', marginBottom: 4 }}>{profile.name}</h1>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span className="address-chip">{shortAddress(profile.address || freelancerAddr)}</span>
-                <span className="badge" style={{ color: 'var(--cyan)', background: 'rgba(0,212,255,0.1)' }}>💼 Freelancer</span>
+    <AppShell>
+      <section className="section container">
+        {loading ? (
+          <SkeletonGrid count={2} />
+        ) : error ||
+          !isAddress(addr) ||
+          !p?.found ||
+          p.role !== "freelancer" ? (
+          <EmptyState
+            title="Freelancer not found"
+            description="This address does not resolve to a registered freelancer profile in the accepted contract state."
+            action={
+              <Link className="button secondary" href="/marketplace">
+                Back to marketplace
+              </Link>
+            }
+          />
+        ) : (
+          <>
+            <p className="eyebrow">Freelancer profile</p>
+            <div className="profile-layout">
+              <div className="profile-main">
+                <article className="card profile-panel">
+                  <div className="profile-identity">
+                    <div className="avatar">
+                      {(p.name?.[0] || "?").toUpperCase()}
+                    </div>
+                    <div>
+                      <h1>{p.name || "Unnamed freelancer"}</h1>
+                      <Address value={p.address || addr} />
+                    </div>
+                  </div>
+                  <p className="profile-bio">
+                    {p.bio ||
+                      "This freelancer has not added a professional summary yet."}
+                  </p>
+                  <div className="social-links">
+                    {(["portfolio", "twitter", "github"] as const).map((k) =>
+                      p[k] ? (
+                        <a
+                          className="button secondary compact"
+                          key={k}
+                          href={external(p[k] || "", k)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {k[0].toUpperCase() + k.slice(1)} ↗
+                        </a>
+                      ) : null,
+                    )}
+                  </div>
+                </article>
+                <article className="panel profile-panel">
+                  <p className="eyebrow">Skills & expertise</p>
+                  {skills.length ? (
+                    <div className="skills">
+                      {skills.map((s) => (
+                        <span className="skill" key={s}>
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="page-lede">No skills have been listed.</p>
+                  )}
+                </article>
+                <article className="panel profile-panel">
+                  <p className="eyebrow">On-chain work record</p>
+                  <div
+                    className="stat-grid"
+                    style={{ gridTemplateColumns: "1fr 1fr" }}
+                  >
+                    <div className="metric">
+                      <span>Completed jobs</span>
+                      <strong>{p.jobs_completed || "0"}</strong>
+                    </div>
+                    <div className="metric">
+                      <span>Total earned</span>
+                      <strong>{formatGEN(p.total_earned || "0")}</strong>
+                    </div>
+                  </div>
+                  <p className="field-hint" style={{ marginTop: 14 }}>
+                    These totals are returned by the deployed contract.
+                    FreelanceMarket does not infer ratings or private work
+                    history.
+                  </p>
+                </article>
               </div>
+              <aside>
+                <div className="card sidebar-card">
+                  <p className="eyebrow">Published rate</p>
+                  <strong className="price">{p.rate || "—"} GEN</strong>
+                  <p>
+                    {p.rate_type
+                      ? `Rate type: ${p.rate_type}`
+                      : "No rate type provided"}
+                  </p>
+                  {me ? (
+                    <Link className="button secondary" href="/dashboard">
+                      Manage your profile
+                    </Link>
+                  ) : (
+                    <Link
+                      className="button primary"
+                      href={`/post-job?freelancer=${p.address || addr}&name=${encodeURIComponent(p.name || "")}`}
+                    >
+                      Hire {p.name || "this freelancer"}
+                    </Link>
+                  )}
+                  <div className="notice info" style={{ marginBottom: 0 }}>
+                    <div>
+                      <strong>Hiring creates an on-chain job.</strong>
+                      <p>
+                        Funding is a separate action after you review the
+                        created job.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </aside>
             </div>
-          </div>
-
-          {profile.bio && <p style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.7, marginBottom: 14 }}>{profile.bio}</p>}
-
-          {/* Links */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {profile.portfolio && <a href={profile.portfolio} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--purple)', textDecoration: 'none' }}>🔗 Portfolio</a>}
-            {profile.twitter && <a href={`https://x.com/${profile.twitter.replace('@', '')}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--purple)', textDecoration: 'none' }}>𝕏 {profile.twitter}</a>}
-            {profile.github && <a href={`https://github.com/${profile.github}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--purple)', textDecoration: 'none' }}>⌥ {profile.github}</a>}
-          </div>
-        </div>
-
-        {/* Skills */}
-        {skills.length > 0 && (
-          <div className="panel fade-in" style={{ padding: '16px 20px', marginBottom: 14 }}>
-            <p style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>Skills</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-              {skills.map((s: string) => (
-                <span key={s} style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(139,53,255,0.12)', color: 'var(--purple)', borderRadius: 7, fontWeight: 600 }}>{s}</span>
-              ))}
-            </div>
-          </div>
+          </>
         )}
-
-        {/* Rate + Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-          {[
-            { val: `${profile.rate || '0'} GEN`, label: `per ${profile.rate_type || 'job'}`, color: 'var(--cyan)' },
-            { val: profile.jobs_completed || '0', label: 'jobs done', color: 'var(--green)' },
-            { val: totalEarned, label: 'total earned', color: 'var(--purple)' },
-          ].map(({ val, label, color }) => (
-            <div key={label} className="panel" style={{ padding: '14px 16px', textAlign: 'center' }}>
-              <p className="font-display" style={{ fontSize: 16, fontWeight: 800, color, marginBottom: 2 }}>{val}</p>
-              <p style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Hire button */}
-        {!isMe && (
-          <button className="btn-primary" style={{ padding: '14px', fontSize: 16, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-            onClick={() => router.push(`/post-job?freelancer=${profile.address || freelancerAddr}&name=${encodeURIComponent(profile.name || '')}`)}>
-            ⚡ Hire {profile.name} →
-          </button>
-        )}
-
-        {isMe && (
-          <button className="btn-outline" style={{ padding: '12px', fontSize: 14, width: '100%' }} onClick={() => router.push('/dashboard')}>
-            Edit Profile in Dashboard
-          </button>
-        )}
-      </div>
-            </div>
-      </div>
-    </>
-  )
+      </section>
+    </AppShell>
+  );
 }

@@ -1,203 +1,380 @@
-'use client'
-import { useCallback, useState } from 'react'
-import { useAccount } from 'wagmi'
-import { useRouter } from 'next/navigation'
-import { TopNav } from '@/components/TopNav'
-import { StatusBadge } from '@/components/StatusBadge'
-import { getProfile, getJobsByClient, getJobsByFreelancer, getStats, humanizeContractError, isJobId, shortAddress, formatGEN, timeAgo, writeContract, type Job, type Profile } from '@/lib/genlayer'
-import { usePolling } from '@/hooks/usePolling'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+"use client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAccount } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
+import {
+  AppShell,
+  EmptyState,
+  PageHeader,
+  SkeletonGrid,
+} from "@/components/AppShell";
+import { StatusBadge } from "@/components/StatusBadge";
+import { Address } from "@/components/Web3UI";
+import { Modal } from "@/components/Modal";
+import {
+  formatGEN,
+  getJobsByClient,
+  getJobsByFreelancer,
+  getProfile,
+  isJobId,
+  timeAgo,
+  checkTransactionReceipt,
+  writeContract,
+  type Job,
+  type Profile,
+} from "@/lib/genlayer";
+import { usePolling } from "@/hooks/usePolling";
+import { useTransactionSync } from "@/hooks/useTransactionSync";
 
-export default function DashboardPage() {
-  const { address, isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
-  const router = useRouter()
-  const [tab, setTab] = useState<'jobs' | 'profile'>('jobs')
-  const [editMode, setEditMode] = useState(false)
-  const [editForm, setEditForm] = useState<Partial<Profile>>({})
-  const [editStatus, setEditStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
-  const [editError, setEditError] = useState('')
-  const [jobLookup, setJobLookup] = useState('')
-
-  const profileFetcher = useCallback(() => address ? getProfile(address) : Promise.resolve(null), [address])
-  const clientFetcher = useCallback(() => address ? getJobsByClient(address) : Promise.resolve([]), [address])
-  const freelancerFetcher = useCallback(() => address ? getJobsByFreelancer(address) : Promise.resolve([]), [address])
-  const statsFetcher = useCallback(() => getStats(), [])
-
-  const { data: profile, refetch: refetchProfile } = usePolling(profileFetcher, 8000)
-  const { data: cJobs, loading: cL } = usePolling(clientFetcher, 5000)
-  const { data: fJobs, loading: fL } = usePolling(freelancerFetcher, 5000)
-  const { data: stats } = usePolling(statsFetcher, 8000)
-
-  const p = profile?.found ? profile : null
-  const clientJobs = Array.isArray(cJobs) ? cJobs : []
-  const freelancerJobs = Array.isArray(fJobs) ? fJobs : []
-  const allJobs = p?.role === 'client' ? clientJobs : freelancerJobs
-  const loading = p?.role === 'client' ? cL : fL
-
-  function startEdit(profile: Profile) {
-    setEditForm({
-      name: profile.name,
-      bio: profile.bio,
-      skills: profile.skills,
-      rate: profile.rate,
-      rate_type: profile.rate_type,
-      portfolio: profile.portfolio,
-      twitter: profile.twitter,
-      github: profile.github,
-    })
-    setEditMode(true)
+export default function Dashboard() {
+  const { address, isConnected } = useAccount();
+  const { openConnectModal } = useConnectModal();
+  const router = useRouter();
+  const [filter, setFilter] = useState("all");
+  const [lookup, setLookup] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<Partial<Profile>>({});
+  const transaction = useTransactionSync(address || "disconnected");
+  useEffect(() => {
+    if (transaction.state.phase !== "confirmed") return;
+    const closeId = window.setTimeout(() => setEditing(false), 0);
+    return () => window.clearTimeout(closeId);
+  }, [transaction.state.phase]);
+  const pf = useCallback(
+    () => (address ? getProfile(address) : Promise.resolve(null)),
+    [address],
+  );
+  const cf = useCallback(
+    () => (address ? getJobsByClient(address) : Promise.resolve([])),
+    [address],
+  );
+  const ff = useCallback(
+    () => (address ? getJobsByFreelancer(address) : Promise.resolve([])),
+    [address],
+  );
+  const {
+    data: profile,
+    loading: profileLoading,
+    refetch: reloadProfile,
+  } = usePolling(pf, 8000);
+  const p = profile?.found ? profile : null;
+  const { data: cJobs, loading: cLoading } = usePolling(cf, 5000);
+  const { data: fJobs, loading: fLoading } = usePolling(ff, 5000);
+  const jobs = (p?.role === "client" ? cJobs : fJobs) as Job[] | null;
+  const list = useMemo(() => (Array.isArray(jobs) ? jobs : []), [jobs]);
+  const filtered =
+    filter === "all" ? list : list.filter((j) => j.status === filter);
+  const action = useMemo(
+    () =>
+      list.filter((j) =>
+        p?.role === "client"
+          ? ["OPEN", "SUBMITTED", "DISPUTED"].includes(j.status || "")
+          : j.status === "FUNDED",
+      ),
+    [list, p?.role],
+  );
+  const escrow = list.reduce(
+    (sum, j) => sum + BigInt(j.escrow_balance || "0"),
+    0n,
+  );
+  const paid = list.filter((j) => j.status === "PAID").length;
+  function edit() {
+    if (!p) return;
+    setForm({
+      name: p.name,
+      bio: p.bio,
+      skills: p.skills,
+      rate: p.rate,
+      rate_type: p.rate_type,
+      portfolio: p.portfolio,
+      twitter: p.twitter,
+      github: p.github,
+    });
+    setEditing(true);
   }
-
-  async function saveProfile() {
-    if (!address || !p) return
-    setEditStatus('saving'); setEditError('')
-    if ((editForm.name || '').trim().length < 2) { setEditStatus('error'); setEditError('Name must be at least 2 characters.'); return }
-    try {
-      await writeContract(address, 'update_profile', [editForm.name || '', editForm.bio || '', editForm.skills || '', editForm.rate || '', editForm.rate_type || 'fixed', editForm.portfolio || '', editForm.twitter || '', editForm.github || ''])
-      setEditStatus('done'); setEditMode(false); setTimeout(refetchProfile, 2000)
-    } catch (e: unknown) { setEditStatus('error'); setEditError(humanizeContractError(e)) }
+  async function save() {
+    if (!address || (form.name || "").trim().length < 2) return;
+    const expected = {
+      name: form.name || "",
+      bio: form.bio || "",
+      skills: form.skills || "",
+      rate: form.rate || "",
+      rate_type: form.rate_type || "fixed",
+      portfolio: form.portfolio || "",
+      twitter: form.twitter || "",
+      github: form.github || "",
+    };
+    const confirmed = await transaction.execute({
+      label: "Update profile",
+      checkReceipt: (hash) => checkTransactionReceipt(address, hash),
+      submit: (lifecycle) =>
+        writeContract(
+          address,
+          "update_profile",
+          Object.values(expected),
+          undefined,
+          lifecycle,
+        ),
+      confirm: async (signal) => {
+        const updated = await getProfile(address, signal);
+        return (Object.keys(expected) as Array<keyof typeof expected>).every(
+          (key) => updated[key] === expected[key],
+        );
+      },
+    });
+    if (confirmed) {
+      setEditing(false);
+      await reloadProfile();
+    }
   }
-
-  const JobRow = ({ job }: { job: Job }) => (
-    <div className="card" style={{ padding: '13px 17px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }} onClick={() => router.push(`/job/${job.job_id}`)}>
-      <div style={{ width: 7, height: 7, borderRadius: '50%', background: { OPEN:'#8B35FF',FUNDED:'#00D4FF',SUBMITTED:'#FFB830',PAID:'#00E5A0',DISPUTED:'#FF4D6A',REFUNDED:'#8A9BC1',CANCELLED:'#8A9BC1' }[job.status as string] || '#8A9BC1', flexShrink: 0 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p className="font-display" style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3 }}>{job.title}</p>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <StatusBadge status={job.status || 'UNKNOWN'} />
-          {job.created_at && <span style={{ fontSize: 11, color: 'var(--muted)' }}>{timeAgo(job.created_at)}</span>}
-        </div>
-      </div>
-      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-        <p style={{ fontSize: 12, fontWeight: 600, color: BigInt(job.escrow_balance || '0') > BigInt(0) ? 'var(--cyan)' : 'var(--muted)' }}>{formatGEN(job.escrow_balance || '0')}</p>
-        <p style={{ fontSize: 10, color: 'var(--muted)' }}>→</p>
-      </div>
-    </div>
-  )
-
   return (
-    <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.35 }} />
-      <div className="orb-purple" style={{ opacity: 0.35 }} />
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 40 }}>
-      {!isConnected ? (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-          <p className="font-display" style={{ fontSize: 20, fontWeight: 700 }}>Connect wallet</p>
-          <button className="btn-primary" style={{ padding: '12px 24px' }} onClick={openConnectModal}>Connect</button>
-        </div>
-      ) : !p ? (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-          <p style={{ color: 'var(--muted)', fontSize: 15 }}>No profile found for this wallet.</p>
-          <button className="btn-primary" style={{ padding: '11px 24px', fontSize: 14 }} onClick={() => router.push('/register')}>Create Profile →</button>
-        </div>
-      ) : (
-        <div>
-          <div className="dashboard-banner">
-            <div>
-              <p className="eyebrow">{p.role === 'client' ? 'CLIENT WORKSPACE' : 'FREELANCER WORKSPACE'}</p>
-              <p style={{ color: 'var(--muted)', fontSize: 13 }}>Actions are limited to the permanent role registered for this wallet.</p>
-            </div>
-            {p.role === 'client' && <button className="btn-primary" style={{ padding: '10px 16px' }} onClick={() => router.push('/marketplace')}>+ Create job</button>}
-          </div>
-          <div style={{ marginBottom: 20 }}>
-            <p style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'JetBrains Mono, monospace', marginBottom: 4 }}>{shortAddress(address || '')}</p>
-            <h1 className="font-display" style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.02em' }}>{p.name}</h1>
-            <span className="badge" style={{ color: p.role === 'freelancer' ? 'var(--cyan)' : 'var(--purple)', background: p.role === 'freelancer' ? 'rgba(0,212,255,0.1)' : 'rgba(139,53,255,0.1)', marginTop: 6, display: 'inline-flex' }}>
-              {p.role === 'freelancer' ? '💼' : '🏢'} {p.role}
-            </span>
-          </div>
-
-          <div className="stat-grid compact">
-            <div className="metric"><span>Platform jobs</span><strong>{stats?.total_jobs || '0'}</strong></div>
-            <div className="metric"><span>Freelancers</span><strong>{stats?.total_freelancers || '0'}</strong></div>
-            <div className="metric"><span>Total paid</span><strong>{formatGEN(stats?.total_paid || '0')}</strong></div>
-          </div>
-
-          <div className="job-lookup panel">
-            <div><strong>Open any job</strong><p>Enter the numeric ID only — for example, 2.</p></div>
-            <div className="lookup-controls"><input aria-label="Job ID" className="input" inputMode="numeric" placeholder="Job ID" value={jobLookup} onChange={e => setJobLookup(e.target.value.replace(/^\s*job_id\s*:\s*/i, ''))} /><button className="btn-outline" onClick={() => router.push(`/job/${jobLookup.trim()}`)} disabled={!isJobId(jobLookup)}>View job</button></div>
-          </div>
-
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: 4, background: 'var(--panel)', border: '1px solid var(--border2)', borderRadius: 10, padding: 4, marginBottom: 20 }}>
-            {(['jobs', 'profile'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: '8px', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 7, cursor: 'pointer', transition: 'all 0.2s', background: tab === t ? 'var(--grad)' : 'transparent', color: tab === t ? 'white' : 'var(--muted)' }}>
-                {t === 'jobs' ? `Jobs (${allJobs.length})` : 'Profile'}
+    <AppShell>
+      <section className="section container">
+        {!isConnected ? (
+          <EmptyState
+            title="Your workspace starts with a wallet"
+            description="Connect the wallet associated with your FreelanceMarket profile to load role-specific jobs and actions."
+            action={
+              <button className="button primary" onClick={openConnectModal}>
+                Connect wallet
               </button>
-            ))}
-          </div>
-
-          {tab === 'jobs' && (
-            <>
-              {loading ? <div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}><div className="spinner" /></div>
-              : allJobs.length === 0 ? (
-                <div className="panel" style={{ padding: '32px 20px', textAlign: 'center' }}>
-                  <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 14 }}>No jobs yet.</p>
-                  {p.role === 'client' && <button className="btn-primary" style={{ padding: '10px 20px', fontSize: 13 }} onClick={() => router.push('/marketplace')}>Browse Freelancers →</button>}
+            }
+          />
+        ) : profileLoading ? (
+          <SkeletonGrid count={3} />
+        ) : !p ? (
+          <EmptyState
+            title="No profile for this wallet"
+            description="Register as a client or freelancer before using the workspace."
+            action={
+              <Link className="button primary" href="/register">
+                Create profile
+              </Link>
+            }
+          />
+        ) : (
+          <>
+            <PageHeader
+              eyebrow={`${p.role} workspace`}
+              title={
+                <>
+                  Welcome back, <span className="gradient-text">{p.name}.</span>
+                </>
+              }
+              description={
+                p.role === "client"
+                  ? "Review engagements, fund open jobs, and act on submitted or disputed work."
+                  : "Track assignments, submit funded work, and follow each engagement through settlement."
+              }
+              actions={
+                p.role === "client" ? (
+                  <Link className="button primary" href="/marketplace">
+                    Hire a freelancer
+                  </Link>
+                ) : undefined
+              }
+            />
+            <div className="stat-grid">
+              <div className="metric">
+                <span>Total jobs</span>
+                <strong>{list.length}</strong>
+              </div>
+              <div className="metric">
+                <span>Action required</span>
+                <strong>{action.length}</strong>
+              </div>
+              <div className="metric">
+                <span>Active escrow</span>
+                <strong>{formatGEN(escrow)}</strong>
+              </div>
+              <div className="metric">
+                <span>Paid jobs</span>
+                <strong>{paid}</strong>
+              </div>
+            </div>
+            <div className="split-grid" style={{ marginTop: 22 }}>
+              <div className="panel profile-panel">
+                <p className="eyebrow">Action required</p>
+                {action.length ? (
+                  <div className="job-list">
+                    {action.slice(0, 4).map((j) => (
+                      <JobRow job={j} key={j.job_id} />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="page-lede">
+                    Nothing needs your attention right now.
+                  </p>
+                )}
+              </div>
+              <div className="panel profile-panel">
+                <p className="eyebrow">Open by job ID</p>
+                <p className="field-hint" style={{ marginBottom: 12 }}>
+                  Use the numeric contract job ID.
+                </p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    className="input"
+                    inputMode="numeric"
+                    value={lookup}
+                    onChange={(e) =>
+                      setLookup(
+                        e.target.value.replace(/^\s*job_id\s*:\s*/i, ""),
+                      )
+                    }
+                    placeholder="Job ID"
+                    aria-label="Job ID"
+                  />
+                  <button
+                    className="button secondary"
+                    disabled={!isJobId(lookup)}
+                    onClick={() => router.push(`/job/${lookup}`)}
+                  >
+                    Open
+                  </button>
                 </div>
-              ) : allJobs.map((j) => <JobRow key={j.job_id} job={j} />)}
-            </>
-          )}
-
-          {tab === 'profile' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {!editMode ? (
-                <>
-                  {[['Bio', p.bio], ['Skills', p.skills], ['Rate', p.rate ? `${p.rate} GEN / ${p.rate_type}` : ''], ['Portfolio', p.portfolio], ['Twitter', p.twitter], ['GitHub', p.github]].filter(([, v]) => v).map(([label, val]) => (
-                    <div key={label as string} className="panel" style={{ padding: '11px 15px', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                      <span style={{ fontSize: 12, color: 'var(--muted)', flexShrink: 0 }}>{label}</span>
-                      <span style={{ fontSize: 13, textAlign: 'right', wordBreak: 'break-word' }}>{val as string}</span>
-                    </div>
-                  ))}
-                  {/* Role is permanent — explain clearly */}
-                  <div className="panel" style={{ padding: '14px 16px', borderColor: 'rgba(123,91,255,0.2)', background: 'rgba(123,91,255,0.05)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                      <span style={{ fontSize: 18 }}>{p.role === 'freelancer' ? '💼' : '🏢'}</span>
-                      <p className="font-display" style={{ fontSize: 14, fontWeight: 700, textTransform: 'capitalize' }}>{p.role}</p>
-                      <span className="badge" style={{ color: 'var(--green)', background: 'rgba(0,229,160,0.1)', fontSize: 9 }}>PERMANENT</span>
-                    </div>
-                    <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
-                      Your role is locked on-chain. To operate as a {p.role === 'freelancer' ? 'client' : 'freelancer'}, connect a different wallet and create a new profile.
-                    </p>
-                  </div>
-                  <button className="btn-outline" style={{ padding: '10px', fontSize: 13 }} onClick={() => startEdit(p)}>Edit Profile</button>
-                </>
-              ) : (
-                <>
-                  {[
-                    { k: 'name', label: 'Name' },
-                    { k: 'bio', label: 'Bio', ta: true },
-                    ...(p.role === 'freelancer' ? [{ k: 'skills', label: 'Skills' }, { k: 'rate', label: 'Rate (GEN)' }, { k: 'portfolio', label: 'Portfolio' }] : []),
-                    { k: 'twitter', label: 'Twitter' },
-                    { k: 'github', label: 'GitHub' },
-                  ].map(({ k, label, ta }) => (
-                    <div key={k}>
-                      <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block', marginBottom: 5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase' }}>{label}</label>
-                      {ta ? (
-                        <textarea className="input" style={{ padding: '10px 13px', fontSize: 13 }} value={String(editForm[k as keyof Profile] || '')} onChange={e => setEditForm(f => ({ ...f, [k]: e.target.value }))} />
-                      ) : (
-                        <input className="input" style={{ padding: '10px 13px', fontSize: 13 }} value={String(editForm[k as keyof Profile] || '')} onChange={e => setEditForm(f => ({ ...f, [k]: e.target.value }))} />
-                      )}
-                    </div>
-                  ))}
-                  <div style={{ display: 'flex', gap: 10 }}>
-                    <button className="btn-outline" style={{ padding: '10px', flex: 1 }} onClick={() => setEditMode(false)}>Cancel</button>
-                    <button className="btn-primary" style={{ padding: '10px', flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={saveProfile} disabled={editStatus === 'saving'}>
-                      {editStatus === 'saving' ? <><div className="spinner" />Saving...</> : 'Save Changes'}
-                    </button>
-                  </div>
-                  {editError && <div className="alert error">{editError}</div>}
-                </>
-              )}
+              </div>
             </div>
-          )}
+            <div className="dashboard-tabs" style={{ marginTop: 36 }}>
+              {[
+                "all",
+                "OPEN",
+                "FUNDED",
+                "SUBMITTED",
+                "PAID",
+                "DISPUTED",
+                "REFUNDED",
+              ].map((x) => (
+                <button
+                  className={filter === x ? "active" : ""}
+                  key={x}
+                  onClick={() => setFilter(x)}
+                >
+                  {x === "all" ? "All jobs" : x}
+                </button>
+              ))}
+            </div>
+            {cLoading || fLoading ? (
+              <SkeletonGrid count={2} />
+            ) : filtered.length ? (
+              <div className="job-list">
+                {filtered.map((j) => (
+                  <JobRow job={j} key={j.job_id} />
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title="No jobs in this view"
+                description={
+                  list.length
+                    ? "Choose another lifecycle filter."
+                    : p.role === "client"
+                      ? "Browse the marketplace to create your first engagement."
+                      : "Assigned jobs will appear after a client creates one for this wallet."
+                }
+              />
+            )}
+            <section className="section compact">
+              <div className="page-header">
+                <div>
+                  <p className="eyebrow">Profile settings</p>
+                  <h2>{p.name}</h2>
+                  <Address value={address || ""} />
+                </div>
+                <button className="button secondary" onClick={edit}>
+                  Edit profile
+                </button>
+              </div>
+            </section>
+            {editing && (
+              <Modal
+                titleId="edit-profile-title"
+                closeDisabled={transaction.pending}
+                onClose={() => setEditing(false)}
+              >
+                  <p className="eyebrow">On-chain profile</p>
+                  <h2 id="edit-profile-title">Edit profile</h2>
+                  <div className="form-stack" style={{ marginTop: 20 }}>
+                    {[
+                      "name",
+                      "bio",
+                      ...(p.role === "freelancer"
+                        ? ["skills", "rate", "rate_type", "portfolio"]
+                        : []),
+                      "twitter",
+                      "github",
+                    ].map((k) => (
+                      <div className="field" key={k}>
+                        <label htmlFor={`edit-${k}`}>
+                          {k.replace("_", " ")}
+                        </label>
+                        {k === "bio" ? (
+                          <textarea
+                            id={`edit-${k}`}
+                            className="input"
+                            value={String(form[k as keyof Profile] || "")}
+                            onChange={(e) =>
+                              setForm((x) => ({ ...x, [k]: e.target.value }))
+                            }
+                          />
+                        ) : (
+                          <input
+                            id={`edit-${k}`}
+                            className="input"
+                            value={String(form[k as keyof Profile] || "")}
+                            onChange={(e) =>
+                              setForm((x) => ({ ...x, [k]: e.target.value }))
+                            }
+                          />
+                        )}
+                      </div>
+                    ))}
+                    <div
+                      className="form-actions"
+                      style={{ display: "flex", gap: 8 }}
+                    >
+                      <button
+                        className="button secondary"
+                        onClick={() => setEditing(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="button primary"
+                        disabled={
+                          transaction.pending ||
+                          (form.name || "").trim().length < 2
+                        }
+                        onClick={() => void save()}
+                      >
+                        Save changes
+                      </button>
+                    </div>
+                  </div>
+              </Modal>
+            )}
+          </>
+        )}
+      </section>
+    </AppShell>
+  );
+}
+function JobRow({ job }: { job: Job }) {
+  return (
+    <Link className="card job-row" href={`/job/${job.job_id}`}>
+      <div>
+        <h3>{job.title || `Job #${job.job_id}`}</h3>
+        <div className="job-meta">
+          <StatusBadge status={job.status || "UNKNOWN"} />
+          <p>
+            {job.created_at ? timeAgo(job.created_at) : `Job #${job.job_id}`}
+          </p>
         </div>
-      )}
-            </div>
       </div>
-    </>
-  )
+      <strong>{formatGEN(job.escrow_balance || "0")}</strong>
+      <span>→</span>
+    </Link>
+  );
 }

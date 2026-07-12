@@ -1,173 +1,308 @@
-'use client'
-import { useState, useEffect, Suspense } from 'react'
-import { useAccount } from 'wagmi'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { TopNav } from '@/components/TopNav'
-import { writeContract, getProfile, getStats, humanizeContractError, isAddress, type Profile } from '@/lib/genlayer'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+"use client";
+import { Suspense, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAccount } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { AppShell, PageHeader } from "@/components/AppShell";
+import { Address } from "@/components/Web3UI";
+import { Modal } from "@/components/Modal";
+import {
+  getJobsByClient,
+  getProfile,
+  isAddress,
+  checkTransactionReceipt,
+  writeContract,
+  type Profile,
+} from "@/lib/genlayer";
+import { useTransactionSync } from "@/hooks/useTransactionSync";
 
-function PostJobContent() {
-  const { address, isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
-  const router = useRouter()
-  const params = useSearchParams()
-  const preFilledFreelancer = params.get('freelancer') || ''
-  const preFilledName = params.get('name') || ''
-
-  const [step, setStep] = useState(0)
-  const [form, setForm] = useState({ title: '', description: '', freelancer: preFilledFreelancer, deadline: '' })
-  const [txStatus, setTxStatus] = useState<'idle' | 'checking' | 'submitting' | 'done' | 'error'>('idle')
-  const [errMsg, setErrMsg] = useState('')
-  const [clientProfile, setClientProfile] = useState<Profile | null>(null)
-
+function Form() {
+  const { address, isConnected } = useAccount();
+  const { openConnectModal } = useConnectModal();
+  const router = useRouter();
+  const params = useSearchParams();
+  const [profile, setProfile] = useState<Profile | null | undefined>();
+  const [freelancer, setFreelancer] = useState(params.get("freelancer") || "");
+  const [name] = useState(params.get("name") || "");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [review, setReview] = useState(false);
+  const transaction = useTransactionSync(address || "disconnected");
+  const knownJobIds = useRef(new Set<string>());
+  const createdJobId = useRef("");
   useEffect(() => {
-    if (!address) return
-    getProfile(address).then(p => setClientProfile(p?.found ? p : null)).catch(() => {})
-  }, [address])
-
-  const f = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
-  const valid0 = form.title.length >= 3 && form.description.length >= 20 && form.deadline.length > 0
-  const valid1 = isAddress(form.freelancer) && form.freelancer.toLowerCase() !== address?.toLowerCase()
-
-  async function submit() {
-    if (!address) return
-    setTxStatus('submitting'); setErrMsg('')
-    try {
-      const before = await getStats()
-      await writeContract(address, 'create_job', [form.title.trim(), form.description.trim(), form.freelancer.trim(), form.deadline.trim()])
-      const after = await getStats().catch(() => null)
-      setTxStatus('done')
-      const newId = after?.total_jobs && after.total_jobs !== before.total_jobs ? after.total_jobs : ''
-      setTimeout(() => router.push(newId ? `/job/${newId}` : '/dashboard'), 900)
-    } catch (e: unknown) {
-      setTxStatus('error')
-      setErrMsg(humanizeContractError(e))
+    if (!address) return;
+    getProfile(address)
+      .then((p) => setProfile(p?.found ? p : null))
+      .catch(() => setProfile(null));
+  }, [address]);
+  useEffect(() => {
+    if (
+      transaction.state.phase === "confirmed" &&
+      createdJobId.current
+    ) {
+      router.push(`/job/${createdJobId.current}`);
     }
+  }, [router, transaction.state.phase]);
+  const valid =
+    title.trim().length >= 3 &&
+    description.trim().length >= 20 &&
+    deadline.trim() !== "" &&
+    isAddress(freelancer) &&
+    freelancer.toLowerCase() !== address?.toLowerCase();
+  async function submit() {
+    if (!address || !valid) return;
+    const confirmed = await transaction.execute({
+      label: "Create job",
+      checkReceipt: (hash) => checkTransactionReceipt(address, hash),
+      prepare: async () => {
+        const existing = await getJobsByClient(address);
+        knownJobIds.current = new Set(existing.map((job) => job.job_id || ""));
+      },
+      submit: (lifecycle) =>
+        writeContract(
+          address,
+          "create_job",
+          [
+            title.trim(),
+            description.trim(),
+            freelancer.trim(),
+            deadline.trim(),
+          ],
+          undefined,
+          lifecycle,
+        ),
+      confirm: async (signal) => {
+        const jobs = await getJobsByClient(address, signal);
+        const match = jobs.find(
+          (job) =>
+            !knownJobIds.current.has(job.job_id || "") &&
+            job.client?.toLowerCase() === address.toLowerCase() &&
+            job.freelancer?.toLowerCase() === freelancer.trim().toLowerCase() &&
+            job.title === title.trim() &&
+            job.description === description.trim() &&
+            job.deadline === deadline.trim(),
+        );
+        if (match?.job_id) createdJobId.current = match.job_id;
+        return Boolean(match?.job_id);
+      },
+    });
+    if (confirmed) setReview(false);
   }
-
-  return (
-    <div style={{ maxWidth: 520, margin: '0 auto' }}>
-      {/* Step indicator */}
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 28 }}>
-        {['Details', 'Freelancer', 'Review'].map((s, i) => (
-          <div key={s} style={{ display: 'flex', alignItems: 'center', flex: i < 2 ? 1 : 'unset' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <div style={{ width: 26, height: 26, borderRadius: '50%', background: i <= step ? 'var(--grad)' : 'var(--panel)', border: `1px solid ${i <= step ? 'transparent' : 'var(--border2)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: i <= step ? 'white' : 'var(--muted)', flexShrink: 0 }}>
-                {i < step ? '✓' : i + 1}
-              </div>
-              <span style={{ fontSize: 12, fontWeight: i === step ? 600 : 400, color: i === step ? 'var(--text)' : 'var(--muted)' }}>{s}</span>
-            </div>
-            {i < 2 && <div style={{ flex: 1, height: 1, background: i < step ? 'var(--purple)' : 'var(--border2)', margin: '0 10px' }} />}
-          </div>
-        ))}
+  if (!isConnected)
+    return (
+      <div className="empty-card">
+        <h2>Connect a client wallet</h2>
+        <p>
+          Job creation is available to registered client wallets on Bradbury.
+        </p>
+        <button className="button primary" onClick={openConnectModal}>
+          Connect wallet
+        </button>
       </div>
-
-      {!isConnected ? (
-        <div className="panel" style={{ padding: '36px 24px', textAlign: 'center' }}>
-          <p style={{ color: 'var(--muted)', marginBottom: 16 }}>Connect wallet to post a job</p>
-          <button className="btn-primary" style={{ padding: '11px 24px', fontSize: 14 }} onClick={openConnectModal}>Connect Wallet</button>
+    );
+  if (profile === undefined) return <div className="skeleton-card" />;
+  if (!profile)
+    return (
+      <div className="empty-card">
+        <h2>Register before posting</h2>
+        <p>This wallet has no accepted on-chain profile.</p>
+        <Link className="button primary" href="/register">
+          Create client profile
+        </Link>
+      </div>
+    );
+  if (profile.role !== "client")
+    return (
+      <div className="empty-card">
+        <h2>A client wallet is required</h2>
+        <p>
+          This wallet is registered as a freelancer. Contract permissions do not
+          allow it to create jobs.
+        </p>
+        <Link className="button secondary" href="/dashboard">
+          Return to dashboard
+        </Link>
+      </div>
+    );
+  return (
+    <div className="job-layout">
+      <div className="card profile-panel">
+        <div className="form-stack">
+          <div className="field">
+            <label htmlFor="title">Job title *</label>
+            <input
+              id="title"
+              className="input"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              maxLength={120}
+              placeholder="e.g. Design and implement a responsive checkout"
+              required
+            />
+            <span className="field-hint">
+              Be specific enough to identify the outcome · {title.length}/120
+            </span>
+          </div>
+          <div className="field">
+            <label htmlFor="description">
+              Scope and acceptance requirements *
+            </label>
+            <textarea
+              id="description"
+              className="input"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Describe the deliverable, required behavior, evidence, and objective acceptance checks."
+              required
+            />
+            <span className="field-hint">
+              Minimum 20 characters. The contract stores this as the description
+              and uses it as verification criteria.
+            </span>
+          </div>
+          <div className="field">
+            <label htmlFor="deadline">Deadline *</label>
+            <input
+              id="deadline"
+              className="input"
+              value={deadline}
+              onChange={(e) => setDeadline(e.target.value)}
+              placeholder="e.g. 2026-08-15 or agreed milestone date"
+              required
+            />
+            <span className="field-hint">
+              The contract stores the exact text entered here.
+            </span>
+          </div>
+          <div className="field">
+            <label htmlFor="freelancer">Freelancer wallet *</label>
+            <input
+              id="freelancer"
+              className="input"
+              value={freelancer}
+              onChange={(e) => setFreelancer(e.target.value)}
+              placeholder="0x..."
+              required
+              aria-invalid={Boolean(freelancer && !isAddress(freelancer))}
+              aria-describedby="freelancer-error freelancer-hint"
+            />
+            <span className="field-hint" id="freelancer-hint">
+              {name
+                ? `Selected from ${name}’s marketplace profile.`
+                : "Choose a registered freelancer from the marketplace or enter their address."}
+            </span>
+            {freelancer && !isAddress(freelancer) && (
+              <span className="field-error" id="freelancer-error">
+                Enter a valid 42-character wallet address.
+              </span>
+            )}
+          </div>
+          <button
+            className="button primary"
+            disabled={!valid}
+            onClick={() => setReview(true)}
+          >
+            Review job
+          </button>
         </div>
-      ) : !clientProfile ? (
-        <div className="panel" style={{ padding: '36px 24px', textAlign: 'center' }}>
-          <p style={{ color: 'var(--muted)', marginBottom: 16 }}>You need a client profile to post jobs</p>
-          <button className="btn-primary" style={{ padding: '11px 24px', fontSize: 14 }} onClick={() => router.push('/register')}>Register as Client</button>
-        </div>
-      ) : clientProfile.role !== 'client' ? (
-        <div className="panel" style={{ padding: '36px 24px', textAlign: 'center' }}>
-          <p style={{ color: 'var(--muted)' }}>Only clients can post jobs. You are registered as a freelancer.</p>
-        </div>
-      ) : txStatus === 'done' ? (
-        <div className="panel" style={{ padding: '48px 24px', textAlign: 'center' }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
-          <p className="font-display" style={{ fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Job posted!</p>
-          <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading the accepted job state...</p>
-        </div>
-      ) : (
-        <>
-          {step === 0 && (
-            <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-              <div>
-                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block', marginBottom: 5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Job Title</label>
-                <input className="input" style={{ padding: '10px 13px', fontSize: 14 }} placeholder="e.g. Design a landing page for my Web3 startup" value={form.title} onChange={e => f('title', e.target.value)} />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block', marginBottom: 5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Description <span style={{ color: 'var(--purple)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>— min 20 chars</span></label>
-                <textarea className="input" style={{ padding: '10px 13px', fontSize: 14 }} placeholder="Describe exactly what needs to be delivered. The contract's AI evaluation uses this as review criteria if verification is triggered." value={form.description} onChange={e => f('description', e.target.value)} />
-                <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{form.description.length} chars</p>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block', marginBottom: 5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Deadline</label>
-                <input className="input" style={{ padding: '10px 13px', fontSize: 14 }} placeholder="2026-07-15" value={form.deadline} onChange={e => f('deadline', e.target.value)} />
-              </div>
-              <button className="btn-primary" style={{ padding: '12px', fontSize: 15, marginTop: 4 }} onClick={() => setStep(1)} disabled={!valid0}>Next →</button>
+      </div>
+      <aside>
+        <div className="card sidebar-card">
+          <p className="eyebrow">Before you create</p>
+          <ul className="feature-list">
+            <li>Creation does not move funds</li>
+            <li>Funding happens on the job page</li>
+            <li>Public URLs are required for submission</li>
+            <li>Verification may release or dispute escrow</li>
+          </ul>
+          <div className="notice info">
+            <div>
+              <strong>Bradbury testnet</strong>
+              <p>
+                This workflow uses testnet GEN and the source-verified deployed
+                contract.
+              </p>
             </div>
-          )}
-
-          {step === 1 && (
-            <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-              {preFilledFreelancer ? (
-                <div className="panel" style={{ padding: '14px 16px', borderColor: 'rgba(0,212,255,0.25)', background: 'rgba(0,212,255,0.04)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--cyan)', display: 'inline-block' }} />
-                    <p style={{ fontSize: 14, fontWeight: 600 }}>{preFilledName}</p>
-                  </div>
-                  <p style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'JetBrains Mono, monospace', marginTop: 4 }}>{preFilledFreelancer}</p>
-                  <p style={{ fontSize: 11, color: 'var(--cyan)', marginTop: 6 }}>Pre-filled from marketplace ✓</p>
-                </div>
-              ) : (
-                <div>
-                  <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block', marginBottom: 5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase' }}>Freelancer Wallet Address</label>
-                  <input className="input" style={{ padding: '10px 13px', fontSize: 13, fontFamily: 'JetBrains Mono, monospace' }} placeholder="0x..." value={form.freelancer} onChange={e => f('freelancer', e.target.value)} />
-                  <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5 }}>Or browse from <button onClick={() => router.push('/marketplace')} style={{ background: 'none', border: 'none', color: 'var(--purple)', cursor: 'pointer', fontSize: 11 }}>Marketplace →</button></p>
-                </div>
-              )}
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button className="btn-outline" style={{ padding: '11px', fontSize: 14, flex: 1 }} onClick={() => setStep(0)}>← Back</button>
-                <button className="btn-primary" style={{ padding: '11px', fontSize: 15, flex: 2 }} onClick={() => setStep(2)} disabled={!valid1}>Review →</button>
+          </div>
+        </div>
+      </aside>
+      {review && (
+        <Modal
+          titleId="review-title"
+          closeDisabled={transaction.pending}
+          onClose={() => setReview(false)}
+        >
+            <p className="eyebrow">Final review</p>
+            <h2 id="review-title">Create this job?</h2>
+            <div className="form-stack" style={{ marginTop: 20 }}>
+              <div className="detail">
+                <span>Title</span>
+                <strong>{title}</strong>
               </div>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {[['Title', form.title], ['Deadline', form.deadline], ['Freelancer', form.freelancer]].map(([label, val]) => (
-                <div key={label} className="panel" style={{ padding: '11px 15px', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>{label}</span>
-                  <span style={{ fontSize: 12, textAlign: 'right', wordBreak: 'break-all', fontFamily: label === 'Freelancer' ? 'JetBrains Mono, monospace' : 'inherit' }}>{val}</span>
-                </div>
-              ))}
-              <div className="panel" style={{ padding: '11px 15px' }}>
-                <p style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Description</p>
-                <p style={{ fontSize: 13, lineHeight: 1.6 }}>{form.description.slice(0, 100)}{form.description.length > 100 ? '...' : ''}</p>
+              <div className="detail">
+                <span>Freelancer</span>
+                <Address value={freelancer} />
               </div>
-              {errMsg && <div style={{ padding: '11px 15px', background: 'rgba(255,77,106,0.08)', border: '1px solid rgba(255,77,106,0.25)', borderRadius: 10, fontSize: 13, color: 'var(--red)', wordBreak: 'break-word' }}>{errMsg}</div>}
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button className="btn-outline" style={{ padding: '11px', fontSize: 14, flex: 1 }} onClick={() => setStep(1)} disabled={txStatus === 'submitting'}>← Back</button>
-                <button className="btn-primary" style={{ padding: '11px', fontSize: 15, flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={submit} disabled={txStatus === 'submitting'}>
-                  {txStatus === 'submitting' ? <><div className="spinner" />Confirming...</> : '⚡ Post Job'}
+              <div className="detail">
+                <span>Deadline</span>
+                <strong>{deadline}</strong>
+              </div>
+              <div className="detail">
+                <span>Stored scope</span>
+                <p className="job-description">{description}</p>
+              </div>
+              <div
+                className="form-actions"
+                style={{ display: "flex", gap: 10 }}
+              >
+                <button
+                  className="button secondary"
+                  disabled={transaction.pending}
+                  onClick={() => setReview(false)}
+                >
+                  Keep editing
+                </button>
+                <button
+                  className="button primary"
+                  disabled={transaction.pending}
+                  onClick={() => void submit()}
+                >
+                  {transaction.pending ? (
+                    <>
+                      <span className="spinner" />
+                      Creating job
+                    </>
+                  ) : (
+                    "Confirm job creation"
+                  )}
                 </button>
               </div>
             </div>
-          )}
-        </>
+        </Modal>
       )}
     </div>
-  )
+  );
 }
-
-export default function PostJobPage() {
+export default function PostJob() {
   return (
-    <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.35 }} />
-      <div className="orb-purple" style={{ opacity: 0.35 }} />
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 40 }}>
-      <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><div className="spinner" style={{ width: 24, height: 24 }} /></div>}>
-        <PostJobContent />
-      </Suspense>
-            </div>
-      </div>
-    </>
-  )
+    <AppShell>
+      <section className="section container">
+        <PageHeader
+          eyebrow="Client workspace"
+          title={
+            <>
+              Create a <span className="gradient-text">clear engagement.</span>
+            </>
+          }
+          description="Write one verifiable scope, assign one registered freelancer, and review the exact contract inputs before submitting."
+        />
+        <Suspense fallback={<div className="skeleton-card" />}>
+          <Form />
+        </Suspense>
+      </section>
+    </AppShell>
+  );
 }

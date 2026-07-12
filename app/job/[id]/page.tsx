@@ -1,175 +1,436 @@
-'use client'
-import { useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { useAccount } from 'wagmi'
-import { TopNav } from '@/components/TopNav'
-import { StatusBadge } from '@/components/StatusBadge'
-import { getJob, writeContract, humanizeContractError, isJobId, isPublicUrl, shortAddress, formatGEN, timeAgo } from '@/lib/genlayer'
-import { CONTRACT_ADDRESS, NETWORK_LABEL } from '@/lib/config'
-import { usePolling } from '@/hooks/usePolling'
-import { parseEther } from 'viem'
+"use client";
+import { useCallback, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useAccount } from "wagmi";
+import { parseEther } from "viem";
+import { AppShell, EmptyState, SkeletonGrid } from "@/components/AppShell";
+import { StatusBadge } from "@/components/StatusBadge";
+import { Address } from "@/components/Web3UI";
+import {
+  formatGEN,
+  getJob,
+  isJobId,
+  isPublicUrl,
+  checkTransactionReceipt,
+  writeContract,
+} from "@/lib/genlayer";
+import { usePolling } from "@/hooks/usePolling";
+import { useTransactionSync } from "@/hooks/useTransactionSync";
 
+const terminal = ["PAID", "REFUNDED", "CANCELLED"];
+const explanation: Record<string, string> = {
+  OPEN: "Created and awaiting client funding.",
+  FUNDED: "GEN is locked. The assigned freelancer can submit work.",
+  SUBMITTED:
+    "Public evidence is ready for client-triggered AI-assisted verification.",
+  PAID: "Verification approved the work and escrow was released.",
+  DISPUTED:
+    "Verification did not approve the evidence. The client may refund escrow.",
+  REFUNDED: "Escrow was returned through the contract refund path.",
+  CANCELLED: "The unfunded job was cancelled by its client.",
+};
 export default function JobPage() {
-  const { id } = useParams<{ id: string }>()
-  const router = useRouter()
-  const { address } = useAccount()
-  const fetcher = useCallback(() => getJob(id), [id])
-  const { data: job, loading, refetch } = usePolling(fetcher, 5000)
-  const [fundAmount, setFundAmount] = useState('')
-  const [deliverableUrl, setDeliverableUrl] = useState('')
-  const [txStatus, setTxStatus] = useState<'idle' | 'pending' | 'done' | 'error'>('idle')
-  const [txLabel, setTxLabel] = useState('')
-  const [errMsg, setErrMsg] = useState('')
-
-  async function doAction(label: string, fn: () => Promise<string>) {
-    setTxStatus('pending'); setTxLabel(label); setErrMsg('')
-    try { await fn(); await refetch(); setTxStatus('done') }
-    catch (e: unknown) {
-      setTxStatus('error'); setErrMsg(humanizeContractError(e))
+  const { id } = useParams<{ id: string }>();
+  const { address } = useAccount();
+  const fetcher = useCallback(() => getJob(id), [id]);
+  const {
+    data: j,
+    loading,
+    error: loadError,
+    refetch,
+  } = usePolling(fetcher, 5000);
+  const [amount, setAmount] = useState("");
+  const [url, setUrl] = useState("");
+  const transaction = useTransactionSync(`${address || "disconnected"}:${id}`);
+  async function act(
+    label: string,
+    method: string,
+    args: unknown[],
+    confirm: (signal: AbortSignal) => Promise<boolean>,
+    value?: bigint,
+  ) {
+    if (!address) return false;
+    const confirmed = await transaction.execute({
+      label,
+      checkReceipt: (hash) => checkTransactionReceipt(address, hash),
+      submit: (lifecycle) =>
+        writeContract(address, method, args, value, lifecycle),
+      confirm,
+    });
+    if (confirmed) {
+      await refetch();
     }
+    return confirmed;
   }
-
-  if (!id || !isJobId(id)) return <><TopNav /><main className="page"><div className="inner empty-state"><h1>Invalid job ID</h1><p>Use a numeric ID only, without “job_id:”.</p></div></main></>
-  if (loading) return <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.35 }} />
-      <div className="orb-purple" style={{ opacity: 0.35 }} />
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 40 }}><div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div className="spinner" style={{ width: 32, height: 32 }} /></div>        </div>
-      </div>
-    </>
-  if (!job?.found) return <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.35 }} />
-      <div className="orb-purple" style={{ opacity: 0.35 }} />
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 40 }}><div style={{ padding: 20 }}><p style={{ color: 'var(--muted)' }}>Job #{id} not found.</p><button className="btn-outline" style={{ padding: '8px 16px', fontSize: 13, marginTop: 12 }} onClick={() => router.back()}>← Back</button></div>        </div>
-      </div>
-    </>
-
-  const isClient = address?.toLowerCase() === job.client?.toLowerCase()
-  const isFreelancer = address?.toLowerCase() === job.freelancer?.toLowerCase()
-  const jobStatus = job.status || 'UNKNOWN'
-  const hasBalance = BigInt(job.escrow_balance || '0') > BigInt(0)
-  const verdictColor = job.ai_verdict === 'APPROVED' ? 'var(--green)' : job.ai_verdict === 'REJECTED' ? 'var(--red)' : 'var(--muted)'
-  const lifecycleStages = ['OPEN', 'FUNDED', 'SUBMITTED', ['DISPUTED', 'REFUNDED'].includes(jobStatus) ? 'DISPUTED' : jobStatus === 'CANCELLED' ? 'CANCELLED' : 'PAID']
-  const lifecycleIndex = jobStatus === 'REFUNDED' ? 3 : lifecycleStages.indexOf(jobStatus)
-  const validFundAmount = Number(fundAmount) > 0 && Number.isFinite(Number(fundAmount))
-
+  if (!isJobId(id))
+    return (
+      <AppShell>
+        <section className="section container">
+          <EmptyState
+            title="Invalid job ID"
+            description="Use a positive numeric job ID without a label or prefix."
+            action={
+              <Link className="button secondary" href="/dashboard">
+                Open dashboard
+              </Link>
+            }
+          />
+        </section>
+      </AppShell>
+    );
+  if (loading)
+    return (
+      <AppShell>
+        <section className="section container">
+          <SkeletonGrid count={3} />
+        </section>
+      </AppShell>
+    );
+  if (loadError || !j?.found)
+    return (
+      <AppShell>
+        <section className="section container">
+          <EmptyState
+            title={`Job #${id} not found`}
+            description="The accepted contract state did not return this job. Check the ID or try again after finalization."
+            action={
+              <Link className="button secondary" href="/dashboard">
+                Open dashboard
+              </Link>
+            }
+          />
+        </section>
+      </AppShell>
+    );
+  const status = j.status || "UNKNOWN";
+  const client = address?.toLowerCase() === j.client?.toLowerCase();
+  const freelancer = address?.toLowerCase() === j.freelancer?.toLowerCase();
+  const balance = BigInt(j.escrow_balance || "0");
+  const stages = [
+    "OPEN",
+    "FUNDED",
+    "SUBMITTED",
+    status === "DISPUTED" || status === "REFUNDED"
+      ? "DISPUTED"
+      : status === "CANCELLED"
+        ? "CANCELLED"
+        : "PAID",
+  ];
+  const stage = status === "REFUNDED" ? 3 : stages.indexOf(status);
+  const canFund = client && status === "OPEN";
+  const canSubmit = freelancer && status === "FUNDED";
+  const canVerify = client && status === "SUBMITTED";
+  const canRefund = client && ["FUNDED", "DISPUTED"].includes(status);
+  const canCancel = client && status === "OPEN";
+  const validAmount = Number(amount) > 0 && Number.isFinite(Number(amount));
+  const hasAction = canFund || canSubmit || canVerify || canRefund || canCancel;
   return (
-    <>
-      <TopNav />
-      <div className="orb-orange" style={{ opacity: 0.35 }} />
-      <div className="orb-purple" style={{ opacity: 0.35 }} />
-      <div className="page" style={{ paddingBottom: 100 }}>
-        <div className="inner" style={{ paddingTop: 40 }}>
-      <div style={{ maxWidth: 560 }}>
-        <div className="context-strip"><span className="live-dot" />{NETWORK_LABEL}<span>Contract {shortAddress(CONTRACT_ADDRESS)}</span></div>
-        {/* Back */}
-        <button onClick={() => router.back()} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 5 }}>← Back</button>
-
-        {/* Title + status */}
-        <div className="fade-in" style={{ marginBottom: 18 }}>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap' }}>
-            <h1 className="font-display" style={{ fontSize: 'clamp(16px,3vw,22px)', fontWeight: 700, letterSpacing: '-0.01em', flex: 1 }}>{job.title}</h1>
-            <StatusBadge status={jobStatus} />
+    <AppShell>
+      <section className="section container">
+        <div className="job-header">
+          <div>
+            <p className="eyebrow">Job #{id} · Accepted contract state</p>
+            <h1>{j.title || `Job #${id}`}</h1>
+            <p className="page-lede">
+              {explanation[status] ||
+                "This job returned an unknown contract status."}
+            </p>
           </div>
-          <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.7, marginBottom: 12 }}>{job.description}</p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            <span className="address-chip">client: {shortAddress(job.client || '')}</span>
-            <span className="address-chip">freelancer: {shortAddress(job.freelancer || '')}</span>
-            {job.deadline && <span className="address-chip">due: {job.deadline}</span>}
-            {job.created_at && <span className="address-chip">{timeAgo(job.created_at)}</span>}
-          </div>
+          <StatusBadge status={status} />
         </div>
-
-        <div className="lifecycle" aria-label="Job lifecycle">
-          {lifecycleStages.map((stage, index) => {
-            const active = lifecycleIndex >= index
-            return <div className={active ? 'life-step active' : 'life-step'} key={`${stage}-${index}`}><span>{active ? '✓' : index + 1}</span><small>{stage}</small></div>
-          })}
-        </div>
-
-        {/* Balance */}
-        <div className="panel fade-in" style={{ padding: '14px 18px', marginBottom: 12, borderColor: hasBalance ? 'rgba(0,212,255,0.25)' : 'var(--border2)', background: hasBalance ? 'rgba(0,212,255,0.04)' : 'var(--panel)' }}>
-          <p style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>Escrowed</p>
-          <p className="font-display" style={{ fontSize: 26, fontWeight: 800, color: hasBalance ? 'var(--cyan)' : 'var(--muted)', textShadow: hasBalance ? '0 0 16px rgba(0,212,255,0.35)' : 'none' }}>
-            {formatGEN(job.escrow_balance || '0')}
-          </p>
-        </div>
-
-        {/* AI Verdict */}
-        {job.ai_verdict && (
-          <div className="panel fade-in" style={{ padding: '14px 18px', marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: 13 }}>🤖</span>
-              <p style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>AI Verdict</p>
-              <span style={{ fontSize: 13, fontWeight: 700, color: verdictColor }}>{job.ai_verdict}</span>
-              <span className="score-chip">Score: {job.ai_score || 'not stored'}</span>
+        <div className="lifecycle" style={{ margin: "30px 0" }}>
+          {stages.map((s, i) => (
+            <div
+              className={`life-step ${stage >= i ? "active" : ""}`}
+              key={`${s}-${i}`}
+            >
+              <span>{stage >= i ? "✓" : i + 1}</span>
+              {s}
             </div>
-            {job.ai_reasoning && <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.65 }}>{job.ai_reasoning}</p>}
-            {!job.ai_score && <p className="data-note">The deployed contract returns verdict and reasoning, but does not persist the evaluator score in job state.</p>}
-          </div>
-        )}
-
-        {/* Deliverable */}
-        {job.deliverable_url && (
-          <div className="panel fade-in" style={{ padding: '12px 16px', marginBottom: 12 }}>
-            <p style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>Deliverable</p>
-            <a href={job.deliverable_url} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--cyan)', wordBreak: 'break-all', textDecoration: 'none' }}>{job.deliverable_url} ↗</a>
-          </div>
-        )}
-
-        <div className="timestamp-grid panel">
-          {[['Created', job.created_at], ['Funded', job.funded_at], ['Submitted', job.submitted_at], ['Resolved', job.resolved_at]].map(([label, value]) => <div key={label}><span>{label}</span><strong>{value ? new Date(value).toLocaleString() : '—'}</strong></div>)}
+          ))}
         </div>
-
-        <hr className="divider" />
-
-        {/* TX feedback */}
-        {txStatus === 'pending' && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, padding: '12px 16px', background: 'rgba(139,53,255,0.08)', border: '1px solid rgba(139,53,255,0.2)', borderRadius: 10 }}><div className="spinner" /><p style={{ fontSize: 13, color: 'var(--purple)' }}>{txLabel}...</p></div>}
-        {txStatus === 'done' && <div className="alert success">Transaction accepted. Job details and related dashboard data were refreshed automatically.</div>}
-        {errMsg && <div style={{ marginBottom: 12, padding: '12px 16px', background: 'rgba(255,77,106,0.08)', border: '1px solid rgba(255,77,106,0.2)', borderRadius: 10, fontSize: 13, color: 'var(--red)', wordBreak: 'break-word' }}>{errMsg}</div>}
-
-        {/* Actions */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {isClient && jobStatus === 'OPEN' && (
-            <div className="panel" style={{ padding: '16px 18px' }}>
-              <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>💰 Fund Escrow</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input className="input" style={{ padding: '10px 12px', fontSize: 14 }} placeholder="GEN amount" type="number" min="0" step="0.001" value={fundAmount} onChange={e => setFundAmount(e.target.value)} />
-                <button className="btn-cyan" style={{ padding: '10px 16px', fontSize: 14, flexShrink: 0 }} onClick={() => doAction('Funding', () => writeContract(address!, 'fund_job', [id], parseEther(fundAmount as `${number}`)))} disabled={!validFundAmount || txStatus === 'pending'}>Lock</button>
+        <div className="job-layout">
+          <div className="job-main">
+            <article className="card job-panel">
+              <p className="eyebrow">Scope & requirements</p>
+              <p className="job-description">
+                {j.description || "No description was stored."}
+              </p>
+            </article>
+            <article className="panel job-panel">
+              <p className="eyebrow">Participants</p>
+              <div className="detail-grid">
+                <div className="detail">
+                  <span>Client</span>
+                  <strong>{j.client_name || "Client wallet"}</strong>
+                  <Address value={j.client || ""} />
+                </div>
+                <div className="detail">
+                  <span>Freelancer</span>
+                  <strong>{j.freelancer_name || "Freelancer wallet"}</strong>
+                  <Address value={j.freelancer || ""} />
+                </div>
               </div>
+            </article>
+            {j.deliverable_url && (
+              <article className="panel job-panel">
+                <p className="eyebrow">Public deliverable evidence</p>
+                <a
+                  href={j.deliverable_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "var(--cyan)", overflowWrap: "anywhere" }}
+                >
+                  {j.deliverable_url} ↗
+                </a>
+              </article>
+            )}
+            {j.ai_verdict && (
+              <article className="panel job-panel">
+                <div className="job-header">
+                  <div>
+                    <p className="eyebrow">AI-assisted verification</p>
+                    <h2>{j.ai_verdict}</h2>
+                  </div>
+                  {j.ai_score && <strong>{j.ai_score}/100</strong>}
+                </div>
+                {j.ai_reasoning && (
+                  <p className="job-description" style={{ marginTop: 18 }}>
+                    {j.ai_reasoning}
+                  </p>
+                )}
+                {j.ai_evidence_summary && (
+                  <div className="notice info">
+                    <div>
+                      <strong>Evidence summary</strong>
+                      <p>{j.ai_evidence_summary}</p>
+                    </div>
+                  </div>
+                )}
+                <p className="field-hint" style={{ marginTop: 18 }}>
+                  This is an AI-assisted contract outcome, not legal arbitration
+                  or proof of objective truth.
+                </p>
+              </article>
+            )}
+            <article className="panel job-panel">
+              <p className="eyebrow">Contract timestamps</p>
+              <div className="detail-grid">
+                {[
+                  ["Created", j.created_at],
+                  ["Funded", j.funded_at],
+                  ["Submitted", j.submitted_at],
+                  ["Resolved", j.resolved_at],
+                ].map(([k, v]) => (
+                  <div className="detail" key={k}>
+                    <span>{k}</span>
+                    <strong>
+                      {v ? new Date(v).toLocaleString() : "Not reached"}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
+          <aside>
+            <div className="card sidebar-card">
+              <p className="eyebrow">Escrow balance</p>
+              <strong className="price">{formatGEN(balance)}</strong>
+              <p>
+                {balance > 0n
+                  ? "Locked in the deployed contract."
+                  : "No GEN currently held for this job."}
+              </p>
+              <div className="detail" style={{ marginBottom: 18 }}>
+                <span>Deadline</span>
+                <strong>{j.deadline || "Not specified"}</strong>
+              </div>
+              {!address && (
+                <div className="notice info">
+                  <div>
+                    <strong>Connect the assigned wallet</strong>
+                    <p>
+                      Contract actions appear only for the client or freelancer
+                      recorded on this job.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {hasAction && (
+                <div className="form-stack">
+                  {canFund && (
+                    <div className="action-card panel">
+                      <h2>Fund escrow</h2>
+                      <p>
+                        Enter the agreed amount. This calls payable fund_job.
+                      </p>
+                      <input
+                        className="input"
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        placeholder="GEN amount"
+                      />
+                      <button
+                        className="button primary"
+                        disabled={!validAmount || transaction.pending}
+                        style={{ width: "100%", marginTop: 10 }}
+                        onClick={() => {
+                          const expected = parseEther(amount as `${number}`);
+                          void act(
+                            "Fund escrow",
+                            "fund_job",
+                            [id],
+                            async (signal) => {
+                              const next = await getJob(id, signal);
+                              return (
+                                next.status === "FUNDED" &&
+                                BigInt(next.escrow_balance || "0") === expected
+                              );
+                            },
+                            expected,
+                          ).then((confirmed) => confirmed && setAmount(""));
+                        }}
+                      >
+                        Lock GEN
+                      </button>
+                    </div>
+                  )}
+                  {canSubmit && (
+                    <div className="action-card panel">
+                      <h2>Submit work</h2>
+                      <p>Provide a public, accessible evidence URL.</p>
+                      <input
+                        className="input"
+                        value={url}
+                        onChange={(e) =>
+                          setUrl(
+                            e.target.value.replace(
+                              /^\s*deliverable_url\s*:\s*/i,
+                              "",
+                            ),
+                          )
+                        }
+                        placeholder="https://..."
+                        aria-invalid={Boolean(url && !isPublicUrl(url))}
+                        aria-describedby="deliverable-error"
+                      />
+                      {url && !isPublicUrl(url) && (
+                        <span className="field-error" id="deliverable-error">
+                          Enter a complete public URL.
+                        </span>
+                      )}
+                      <button
+                        className="button primary"
+                        disabled={!isPublicUrl(url) || transaction.pending}
+                        style={{ width: "100%", marginTop: 10 }}
+                        onClick={() => {
+                          const expectedUrl = url.trim();
+                          void act(
+                            "Submit work",
+                            "submit_work",
+                            [id, expectedUrl],
+                            async (signal) => {
+                              const next = await getJob(id, signal);
+                              return (
+                                next.status === "SUBMITTED" &&
+                                next.deliverable_url === expectedUrl
+                              );
+                            },
+                          ).then((confirmed) => confirmed && setUrl(""));
+                        }}
+                      >
+                        Submit evidence
+                      </button>
+                    </div>
+                  )}
+                  {canVerify && (
+                    <div className="action-card panel">
+                      <h2>Verify & settle</h2>
+                      <p>
+                        Independent validators evaluate public evidence against
+                        the stored scope. Approval releases GEN; rejection marks
+                        the job disputed.
+                      </p>
+                      <button
+                        className="button primary"
+                        disabled={transaction.pending}
+                        onClick={() =>
+                          void act(
+                            "AI-assisted verification",
+                            "verify_and_release",
+                            [id],
+                            async (signal) => {
+                              const next = await getJob(id, signal);
+                              return ["PAID", "DISPUTED"].includes(
+                                next.status || "",
+                              );
+                            },
+                          )
+                        }
+                      >
+                        Start verification
+                      </button>
+                    </div>
+                  )}
+                  {canRefund && (
+                    <button
+                      className="button danger"
+                      disabled={transaction.pending}
+                      onClick={() =>
+                        void act(
+                          "Refund escrow",
+                          "client_refund",
+                          [id],
+                          async (signal) => {
+                            const next = await getJob(id, signal);
+                            return (
+                              next.status === "REFUNDED" &&
+                              BigInt(next.escrow_balance || "0") === BigInt(0)
+                            );
+                          },
+                        )
+                      }
+                    >
+                      Refund escrowed GEN
+                    </button>
+                  )}
+                  {canCancel && (
+                    <button
+                      className="button secondary"
+                      disabled={transaction.pending}
+                      onClick={() =>
+                        void act(
+                          "Cancel job",
+                          "cancel_job",
+                          [id],
+                          async (signal) =>
+                            (await getJob(id, signal)).status === "CANCELLED",
+                        )
+                      }
+                    >
+                      Cancel unfunded job
+                    </button>
+                  )}
+                </div>
+              )}
+              {terminal.includes(status) && (
+                <div className="notice success">
+                  <div>
+                    <strong>Job lifecycle complete</strong>
+                    <p>
+                      No further contract actions are available in this state.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-          {isFreelancer && jobStatus === 'FUNDED' && (
-            <div className="panel" style={{ padding: '16px 18px' }}>
-              <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>📎 Submit Work</p>
-              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>Any public URL — GitHub, live app, doc, Figma</p>
-              <input className="input" style={{ padding: '10px 12px', fontSize: 13, marginBottom: 10 }} placeholder="https://..." value={deliverableUrl} onChange={e => setDeliverableUrl(e.target.value.replace(/^\s*deliverable_url\s*:\s*/i, ''))} />
-              {deliverableUrl && !isPublicUrl(deliverableUrl) && <p className="field-error">Enter the URL only, beginning with http:// or https://.</p>}
-              <button className="btn-primary" style={{ padding: '11px', fontSize: 14, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }} onClick={() => doAction('Submitting', () => writeContract(address!, 'submit_work', [id, deliverableUrl.trim()]))} disabled={!isPublicUrl(deliverableUrl) || txStatus === 'pending'}>Submit Work →</button>
-            </div>
-          )}
-          {isClient && jobStatus === 'SUBMITTED' && (
-            <div className="panel" style={{ padding: '16px 18px', borderColor: 'rgba(139,53,255,0.3)', background: 'rgba(139,53,255,0.04)' }}>
-              <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>🤖 Verify with AI</p>
-              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>GenLayer evaluates the deliverable URL against the job description. If the accepted contract result approves it, escrow is released to the freelancer; if rejected, the job enters DISPUTED.</p>
-              <button className="btn-primary" style={{ padding: '12px', fontSize: 15, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={() => doAction('AI verifying', () => writeContract(address!, 'verify_and_release', [id]))} disabled={txStatus === 'pending'}>
-                {txStatus === 'pending' ? <><div className="spinner" />Verifying...</> : 'Verify & Release'}
-              </button>
-            </div>
-          )}
-          {isClient && ['DISPUTED', 'FUNDED'].includes(jobStatus) && (
-            <button className="btn-danger" style={{ padding: '12px', fontSize: 14 }} onClick={() => doAction('Refunding', () => writeContract(address!, 'client_refund', [id]))} disabled={txStatus === 'pending'}>Refund Escrowed GEN</button>
-          )}
-          {isClient && jobStatus === 'OPEN' && (
-            <button className="btn-outline" style={{ padding: '10px', fontSize: 13, opacity: 0.6 }} onClick={() => doAction('Cancelling', () => writeContract(address!, 'cancel_job', [id]))} disabled={txStatus === 'pending'}>Cancel Job</button>
-          )}
+          </aside>
         </div>
-      </div>
-            </div>
-      </div>
-    </>
-  )
+      </section>
+    </AppShell>
+  );
 }

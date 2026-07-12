@@ -1,174 +1,136 @@
-'use client'
-import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { useAccount, useDisconnect } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useEffect, useState } from 'react'
-import { getProfile, type Profile } from '@/lib/genlayer'
-import { resolveGNS } from '@/lib/gns'
-import { CONTRACT_ADDRESS, NETWORK_LABEL } from '@/lib/config'
-import { shortAddress } from '@/lib/genlayer'
+"use client";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useAccount, useDisconnect } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { useEffect, useState } from "react";
+import { getProfile, shortAddress, type Profile } from "@/lib/genlayer";
 
-function ThemeToggle() {
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    if (typeof window === 'undefined') return 'dark'
-    return (localStorage.getItem('fm-theme') as 'dark' | 'light' | null) || 'dark'
-  })
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
-  }, [theme])
-  function toggle() {
-    const n = theme === 'dark' ? 'light' : 'dark'
-    setTheme(n); document.documentElement.setAttribute('data-theme', n)
-    localStorage.setItem('fm-theme', n)
-  }
-  return (
-    <button onClick={toggle} style={{ background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>
-      {theme === 'dark' ? '☀️' : '🌙'}
-    </button>
-  )
-}
-
-const LINKS = [
-  { href: '/', num: '0.1', label: 'Home' },
-  { href: '/marketplace', num: '0.2', label: 'Marketplace' },
-  { href: '/dashboard', num: '0.3', label: 'Dashboard' },
-]
-
-type ProfileState = 'loading' | 'none' | 'registered'
+const links = [
+  { href: "/", label: "Home" },
+  { href: "/marketplace", label: "Marketplace" },
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/post-job", label: "Post a Job" },
+];
 
 export function TopNav() {
-  const path = usePathname()
-  const router = useRouter()
-  const { address, isConnected } = useAccount()
-  const { disconnect } = useDisconnect()
-  const { openConnectModal } = useConnectModal()
-
-  // Start as 'loading' so we never flash "Create Profile" for registered users
-  const [profileState, setProfileState] = useState<ProfileState>('loading')
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [genName, setGenName] = useState<string>('')
-
+  const path = usePathname();
+  const router = useRouter();
+  const { address, isConnected } = useAccount();
+  const { disconnect } = useDisconnect();
+  const { openConnectModal } = useConnectModal();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileAddress, setProfileAddress] = useState("");
+  const [menu, setMenu] = useState(false);
   useEffect(() => {
-    let cancelled = false
-
-    async function loadProfile() {
-      await Promise.resolve()
-      if (cancelled) return
-
-      if (!isConnected || !address) {
-        setProfileState('loading')
-        setProfile(null)
-        setGenName('')
-        return
-      }
-
-      setProfileState('loading')
-
-      try {
-        const [p, gns] = await Promise.all([
-          getProfile(address),
-          resolveGNS(address),
-        ])
-        if (cancelled) return
-        const hasProfile = p?.found === true || p?.found === 'true'
-        setProfile(hasProfile ? p : null)
-        setGenName(gns || '')
-        setProfileState(hasProfile ? 'registered' : 'none')
-      } catch {
-        if (!cancelled) setProfileState('none')
-      }
-    }
-
-    void loadProfile()
-    const refreshProfile = () => { void loadProfile() }
-    window.addEventListener('freelance-market:refresh', refreshProfile)
-    return () => { cancelled = true; window.removeEventListener('freelance-market:refresh', refreshProfile) }
-  }, [address, isConnected])
-
-  const short = address ? `${address.slice(0, 6)}···${address.slice(-4)}` : ''
-
+    let live = true;
+    if (!address) return;
+    const load = () =>
+      getProfile(address)
+        .then((p) => {
+          if (live)
+            setProfile(p?.found === true || p?.found === "true" ? p : null);
+          if (live) setProfileAddress(address);
+        })
+        .catch(() => {});
+    void load();
+    window.addEventListener("freelance-market:refresh", load);
+    return () => {
+      live = false;
+      window.removeEventListener("freelance-market:refresh", load);
+    };
+  }, [address]);
+  useEffect(() => {
+    if (!menu) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [menu]);
+  const active = (href: string) =>
+    href === "/" ? path === href : path.startsWith(href);
+  const visibleProfile = profileAddress === address ? profile : null;
   return (
-    <>
-      <nav className="topnav">
-        {/* Logo */}
-        <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', flexShrink: 0 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 7, background: 'var(--grad)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>🤝</div>
-          <span className="font-display" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>FreelanceMarket</span>
+    <header className="nav-shell">
+      <nav className="topnav container" aria-label="Primary navigation">
+        <Link className="brand" href="/">
+          <span className="brand-mark">F</span>
+          <span>FreelanceMarket</span>
+          <small>beta</small>
         </Link>
-
-        {/* Center nav */}
         <div className="nav-links">
-          {LINKS.map(({ href, num, label }) => (
-            <Link key={href} href={href} className={`nav-link ${path === href ? 'active' : ''}`}>
-              <span className="num">{num} /</span> {label}
+          {links.map((l) => (
+            <Link
+              className={active(l.href) ? "active" : ""}
+              href={l.href}
+              key={l.href}
+            >
+              {l.label}
             </Link>
           ))}
         </div>
-
-        {/* Right */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <div className="network-pill" title={CONTRACT_ADDRESS}><span />{NETWORK_LABEL} · {shortAddress(CONTRACT_ADDRESS)}</div>
-          <ThemeToggle />
-
-          {!isConnected && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn-glass" style={{ padding: '7px 16px', fontSize: 13 }} onClick={openConnectModal}>Login</button>
-              <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 13 }} onClick={openConnectModal}>Get Started →</button>
-            </div>
+        <div className="nav-actions">
+          <span className="network-badge">
+            <i />
+            Bradbury
+          </span>
+          {!isConnected ? (
+            <button
+              className="button primary compact"
+              onClick={openConnectModal}
+            >
+              Connect wallet
+            </button>
+          ) : (
+            <>
+              <button
+                className="wallet-button"
+                onClick={() => router.push("/dashboard")}
+              >
+                <i />
+                {visibleProfile?.name || shortAddress(address || "")}
+                <small>{visibleProfile?.role || "connected"}</small>
+              </button>
+              <button
+                className="icon-button desktop-only"
+                onClick={() => disconnect()}
+                aria-label="Disconnect wallet"
+              >
+                ↪
+              </button>
+            </>
           )}
-
+          <button
+            className="menu-button"
+            onClick={() => setMenu((v) => !v)}
+            aria-expanded={menu}
+            aria-controls="mobile-navigation"
+            aria-label="Toggle navigation"
+          >
+            <span />
+            <span />
+          </button>
+        </div>
+      </nav>
+      {menu && (
+        <div className="mobile-menu container" id="mobile-navigation">
+          {links.map((l) => (
+            <Link
+              onClick={() => setMenu(false)}
+              className={active(l.href) ? "active" : ""}
+              href={l.href}
+              key={l.href}
+            >
+              {l.label}
+              <span>→</span>
+            </Link>
+          ))}
           {isConnected && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-
-              {/* Only show Create Profile if confirmed NOT registered */}
-              {profileState === 'none' && (
-                <button className="btn-orange" style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600 }} onClick={() => router.push('/register')}>
-                  + Create Profile
-                </button>
-              )}
-
-              {/* Role badge — only show when confirmed registered */}
-              {profileState === 'registered' && profile && (
-                <span className="badge" style={{
-                  color: profile.role === 'freelancer' ? 'var(--orange)' : 'var(--purple2)',
-                  background: profile.role === 'freelancer' ? 'rgba(255,123,53,0.12)' : 'rgba(123,91,255,0.12)',
-                  fontSize: 10, padding: '4px 10px',
-                }}>
-                  {profile.role === 'freelancer' ? '💼' : '🏢'} {profile.role}
-                </span>
-              )}
-
-              {/* Wallet button */}
-              <button className="btn-glass" style={{ padding: '6px 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => router.push('/dashboard')}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', flexShrink: 0 }} />
-                {genName
-                  ? <span style={{ color: 'var(--purple2)', fontWeight: 700 }}>{genName}</span>
-                  : <span>{short}</span>
-                }
-              </button>
-
-              <button className="btn-outline" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => disconnect()}>
-                Leave
-              </button>
-            </div>
+            <button onClick={() => disconnect()}>Disconnect wallet</button>
           )}
         </div>
-      </nav>
-
-      {/* Mobile bottom nav */}
-      <nav className="mobile-nav">
-        {LINKS.map(({ href, num, label }) => (
-          <Link key={href} href={href} className={`mob-item ${path === href ? 'active' : ''}`}>
-            <span style={{ fontSize: 14 }}>{num === '0.1' ? '🏠' : num === '0.2' ? '🏪' : '📊'}</span>
-            {label}
-          </Link>
-        ))}
-        <div className="mob-item" style={{ cursor: 'pointer' }} onClick={isConnected ? () => router.push('/dashboard') : openConnectModal}>
-          <span style={{ fontSize: 14 }}>👤</span>
-          {isConnected ? (genName || short.slice(0, 8)) : 'Connect'}
-        </div>
-      </nav>
-    </>
-  )
+      )}
+    </header>
+  );
 }
