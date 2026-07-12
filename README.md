@@ -7,8 +7,8 @@ FreelanceMarket Escrow is a GenLayer Bradbury testnet app for client/freelancer 
 - Live app: https://genmarket-escrow.vercel.app/
 - GitHub repo: https://github.com/Manablaq/freelance-escrow
 - Contract source: `contracts/freelance_market.py`
-- Deployed contract: `0x6d7e8fE1195919146f1cD7B4e1E1965af4Da101f`
-- Explorer: https://explorer-bradbury.genlayer.com/address/0x6d7e8fE1195919146f1cD7B4e1E1965af4Da101f
+- Deployed contract: `0x75af88bfA0592CFA63c06f2F68BfD35C13dDd4EF`
+- Explorer: https://explorer-bradbury.genlayer.com/address/0x75af88bfA0592CFA63c06f2F68BfD35C13dDd4EF
 
 ## Network
 
@@ -107,8 +107,8 @@ git diff --check
 ## Deployment Proof
 
 - Live deployment: https://genmarket-escrow.vercel.app/
-- Deployed contract: `0x6d7e8fE1195919146f1cD7B4e1E1965af4Da101f`
-- Explorer proof: https://explorer-bradbury.genlayer.com/address/0x6d7e8fE1195919146f1cD7B4e1E1965af4Da101f
+- Deployed contract: `0x75af88bfA0592CFA63c06f2F68BfD35C13dDd4EF`
+- Explorer proof: https://explorer-bradbury.genlayer.com/address/0x75af88bfA0592CFA63c06f2F68BfD35C13dDd4EF
 - Frontend config uses Bradbury chain ID `4221`, RPC `https://rpc-bradbury.genlayer.com`, and explorer `https://explorer-bradbury.genlayer.com`.
 
 ## Limitations

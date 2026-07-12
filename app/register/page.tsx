@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useRouter } from 'next/navigation'
 import { TopNav } from '@/components/TopNav'
-import { writeContract } from '@/lib/genlayer'
+import { humanizeContractError, writeContract } from '@/lib/genlayer'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 
 export default function RegisterPage() {
@@ -25,8 +25,7 @@ export default function RegisterPage() {
       setStatus('done')
       setTimeout(() => router.push(role === 'freelancer' ? '/dashboard' : '/marketplace'), 1500)
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setStatus('error'); setErrMsg(message.slice(0, 200))
+      setStatus('error'); setErrMsg(humanizeContractError(e))
     }
   }
 

@@ -4,7 +4,7 @@ import { useAccount } from 'wagmi'
 import { useRouter } from 'next/navigation'
 import { TopNav } from '@/components/TopNav'
 import { StatusBadge } from '@/components/StatusBadge'
-import { getProfile, getJobsByClient, getJobsByFreelancer, shortAddress, formatGEN, timeAgo, writeContract, type Job, type Profile } from '@/lib/genlayer'
+import { getProfile, getJobsByClient, getJobsByFreelancer, getStats, humanizeContractError, isJobId, shortAddress, formatGEN, timeAgo, writeContract, type Job, type Profile } from '@/lib/genlayer'
 import { usePolling } from '@/hooks/usePolling'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 
@@ -16,14 +16,18 @@ export default function DashboardPage() {
   const [editMode, setEditMode] = useState(false)
   const [editForm, setEditForm] = useState<Partial<Profile>>({})
   const [editStatus, setEditStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
+  const [editError, setEditError] = useState('')
+  const [jobLookup, setJobLookup] = useState('')
 
   const profileFetcher = useCallback(() => address ? getProfile(address) : Promise.resolve(null), [address])
   const clientFetcher = useCallback(() => address ? getJobsByClient(address) : Promise.resolve([]), [address])
   const freelancerFetcher = useCallback(() => address ? getJobsByFreelancer(address) : Promise.resolve([]), [address])
+  const statsFetcher = useCallback(() => getStats(), [])
 
   const { data: profile, refetch: refetchProfile } = usePolling(profileFetcher, 8000)
   const { data: cJobs, loading: cL } = usePolling(clientFetcher, 5000)
   const { data: fJobs, loading: fL } = usePolling(freelancerFetcher, 5000)
+  const { data: stats } = usePolling(statsFetcher, 8000)
 
   const p = profile?.found ? profile : null
   const clientJobs = Array.isArray(cJobs) ? cJobs : []
@@ -47,11 +51,12 @@ export default function DashboardPage() {
 
   async function saveProfile() {
     if (!address || !p) return
-    setEditStatus('saving')
+    setEditStatus('saving'); setEditError('')
+    if ((editForm.name || '').trim().length < 2) { setEditStatus('error'); setEditError('Name must be at least 2 characters.'); return }
     try {
       await writeContract(address, 'update_profile', [editForm.name || '', editForm.bio || '', editForm.skills || '', editForm.rate || '', editForm.rate_type || 'fixed', editForm.portfolio || '', editForm.twitter || '', editForm.github || ''])
       setEditStatus('done'); setEditMode(false); setTimeout(refetchProfile, 2000)
-    } catch { setEditStatus('error') }
+    } catch (e: unknown) { setEditStatus('error'); setEditError(humanizeContractError(e)) }
   }
 
   const JobRow = ({ job }: { job: Job }) => (
@@ -90,12 +95,30 @@ export default function DashboardPage() {
         </div>
       ) : (
         <div>
+          <div className="dashboard-banner">
+            <div>
+              <p className="eyebrow">{p.role === 'client' ? 'CLIENT WORKSPACE' : 'FREELANCER WORKSPACE'}</p>
+              <p style={{ color: 'var(--muted)', fontSize: 13 }}>Actions are limited to the permanent role registered for this wallet.</p>
+            </div>
+            {p.role === 'client' && <button className="btn-primary" style={{ padding: '10px 16px' }} onClick={() => router.push('/marketplace')}>+ Create job</button>}
+          </div>
           <div style={{ marginBottom: 20 }}>
             <p style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'JetBrains Mono, monospace', marginBottom: 4 }}>{shortAddress(address || '')}</p>
             <h1 className="font-display" style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.02em' }}>{p.name}</h1>
             <span className="badge" style={{ color: p.role === 'freelancer' ? 'var(--cyan)' : 'var(--purple)', background: p.role === 'freelancer' ? 'rgba(0,212,255,0.1)' : 'rgba(139,53,255,0.1)', marginTop: 6, display: 'inline-flex' }}>
               {p.role === 'freelancer' ? '💼' : '🏢'} {p.role}
             </span>
+          </div>
+
+          <div className="stat-grid compact">
+            <div className="metric"><span>Platform jobs</span><strong>{stats?.total_jobs || '0'}</strong></div>
+            <div className="metric"><span>Freelancers</span><strong>{stats?.total_freelancers || '0'}</strong></div>
+            <div className="metric"><span>Total paid</span><strong>{formatGEN(stats?.total_paid || '0')}</strong></div>
+          </div>
+
+          <div className="job-lookup panel">
+            <div><strong>Open any job</strong><p>Enter the numeric ID only — for example, 2.</p></div>
+            <div className="lookup-controls"><input aria-label="Job ID" className="input" inputMode="numeric" placeholder="Job ID" value={jobLookup} onChange={e => setJobLookup(e.target.value.replace(/^\s*job_id\s*:\s*/i, ''))} /><button className="btn-outline" onClick={() => router.push(`/job/${jobLookup.trim()}`)} disabled={!isJobId(jobLookup)}>View job</button></div>
           </div>
 
           {/* Tabs */}
@@ -166,6 +189,7 @@ export default function DashboardPage() {
                       {editStatus === 'saving' ? <><div className="spinner" />Saving...</> : 'Save Changes'}
                     </button>
                   </div>
+                  {editError && <div className="alert error">{editError}</div>}
                 </>
               )}
             </div>

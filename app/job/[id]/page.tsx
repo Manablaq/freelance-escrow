@@ -4,7 +4,8 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAccount } from 'wagmi'
 import { TopNav } from '@/components/TopNav'
 import { StatusBadge } from '@/components/StatusBadge'
-import { getJob, writeContract, shortAddress, formatGEN, timeAgo } from '@/lib/genlayer'
+import { getJob, writeContract, humanizeContractError, isJobId, isPublicUrl, shortAddress, formatGEN, timeAgo } from '@/lib/genlayer'
+import { CONTRACT_ADDRESS, NETWORK_LABEL } from '@/lib/config'
 import { usePolling } from '@/hooks/usePolling'
 import { parseEther } from 'viem'
 
@@ -22,13 +23,13 @@ export default function JobPage() {
 
   async function doAction(label: string, fn: () => Promise<string>) {
     setTxStatus('pending'); setTxLabel(label); setErrMsg('')
-    try { await fn(); setTxStatus('done'); setTimeout(refetch, 2000) }
+    try { await fn(); await refetch(); setTxStatus('done') }
     catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setTxStatus('error'); setErrMsg(message.slice(0, 200))
+      setTxStatus('error'); setErrMsg(humanizeContractError(e))
     }
   }
 
+  if (!id || !isJobId(id)) return <><TopNav /><main className="page"><div className="inner empty-state"><h1>Invalid job ID</h1><p>Use a numeric ID only, without “job_id:”.</p></div></main></>
   if (loading) return <>
       <TopNav />
       <div className="orb-orange" style={{ opacity: 0.35 }} />
@@ -51,6 +52,9 @@ export default function JobPage() {
   const jobStatus = job.status || 'UNKNOWN'
   const hasBalance = BigInt(job.escrow_balance || '0') > BigInt(0)
   const verdictColor = job.ai_verdict === 'APPROVED' ? 'var(--green)' : job.ai_verdict === 'REJECTED' ? 'var(--red)' : 'var(--muted)'
+  const lifecycleStages = ['OPEN', 'FUNDED', 'SUBMITTED', ['DISPUTED', 'REFUNDED'].includes(jobStatus) ? 'DISPUTED' : jobStatus === 'CANCELLED' ? 'CANCELLED' : 'PAID']
+  const lifecycleIndex = jobStatus === 'REFUNDED' ? 3 : lifecycleStages.indexOf(jobStatus)
+  const validFundAmount = Number(fundAmount) > 0 && Number.isFinite(Number(fundAmount))
 
   return (
     <>
@@ -60,6 +64,7 @@ export default function JobPage() {
       <div className="page" style={{ paddingBottom: 100 }}>
         <div className="inner" style={{ paddingTop: 40 }}>
       <div style={{ maxWidth: 560 }}>
+        <div className="context-strip"><span className="live-dot" />{NETWORK_LABEL}<span>Contract {shortAddress(CONTRACT_ADDRESS)}</span></div>
         {/* Back */}
         <button onClick={() => router.back()} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 5 }}>← Back</button>
 
@@ -78,6 +83,13 @@ export default function JobPage() {
           </div>
         </div>
 
+        <div className="lifecycle" aria-label="Job lifecycle">
+          {lifecycleStages.map((stage, index) => {
+            const active = lifecycleIndex >= index
+            return <div className={active ? 'life-step active' : 'life-step'} key={`${stage}-${index}`}><span>{active ? '✓' : index + 1}</span><small>{stage}</small></div>
+          })}
+        </div>
+
         {/* Balance */}
         <div className="panel fade-in" style={{ padding: '14px 18px', marginBottom: 12, borderColor: hasBalance ? 'rgba(0,212,255,0.25)' : 'var(--border2)', background: hasBalance ? 'rgba(0,212,255,0.04)' : 'var(--panel)' }}>
           <p style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>Escrowed</p>
@@ -93,8 +105,10 @@ export default function JobPage() {
               <span style={{ fontSize: 13 }}>🤖</span>
               <p style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>AI Verdict</p>
               <span style={{ fontSize: 13, fontWeight: 700, color: verdictColor }}>{job.ai_verdict}</span>
+              <span className="score-chip">Score: {job.ai_score || 'not stored'}</span>
             </div>
             {job.ai_reasoning && <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.65 }}>{job.ai_reasoning}</p>}
+            {!job.ai_score && <p className="data-note">The deployed contract returns verdict and reasoning, but does not persist the evaluator score in job state.</p>}
           </div>
         )}
 
@@ -106,11 +120,15 @@ export default function JobPage() {
           </div>
         )}
 
+        <div className="timestamp-grid panel">
+          {[['Created', job.created_at], ['Funded', job.funded_at], ['Submitted', job.submitted_at], ['Resolved', job.resolved_at]].map(([label, value]) => <div key={label}><span>{label}</span><strong>{value ? new Date(value).toLocaleString() : '—'}</strong></div>)}
+        </div>
+
         <hr className="divider" />
 
         {/* TX feedback */}
         {txStatus === 'pending' && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, padding: '12px 16px', background: 'rgba(139,53,255,0.08)', border: '1px solid rgba(139,53,255,0.2)', borderRadius: 10 }}><div className="spinner" /><p style={{ fontSize: 13, color: 'var(--purple)' }}>{txLabel}...</p></div>}
-        {txStatus === 'done' && <div style={{ marginBottom: 12, padding: '12px 16px', background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', borderRadius: 10, fontSize: 13, color: 'var(--green)', lineHeight: 1.5 }}>Submitted and accepted on Bradbury. Finalization may still be pending; GenExplorer can show accepted (undetermined) during the finalization window.</div>}
+        {txStatus === 'done' && <div className="alert success">Transaction accepted. Job details and related dashboard data were refreshed automatically.</div>}
         {errMsg && <div style={{ marginBottom: 12, padding: '12px 16px', background: 'rgba(255,77,106,0.08)', border: '1px solid rgba(255,77,106,0.2)', borderRadius: 10, fontSize: 13, color: 'var(--red)', wordBreak: 'break-word' }}>{errMsg}</div>}
 
         {/* Actions */}
@@ -120,7 +138,7 @@ export default function JobPage() {
               <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>💰 Fund Escrow</p>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input className="input" style={{ padding: '10px 12px', fontSize: 14 }} placeholder="GEN amount" type="number" min="0" step="0.001" value={fundAmount} onChange={e => setFundAmount(e.target.value)} />
-                <button className="btn-cyan" style={{ padding: '10px 16px', fontSize: 14, flexShrink: 0 }} onClick={() => doAction('Funding', () => writeContract(address!, 'fund_job', [id], parseEther(fundAmount as `${number}`)))} disabled={!fundAmount || txStatus === 'pending'}>Lock</button>
+                <button className="btn-cyan" style={{ padding: '10px 16px', fontSize: 14, flexShrink: 0 }} onClick={() => doAction('Funding', () => writeContract(address!, 'fund_job', [id], parseEther(fundAmount as `${number}`)))} disabled={!validFundAmount || txStatus === 'pending'}>Lock</button>
               </div>
             </div>
           )}
@@ -128,8 +146,9 @@ export default function JobPage() {
             <div className="panel" style={{ padding: '16px 18px' }}>
               <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>📎 Submit Work</p>
               <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>Any public URL — GitHub, live app, doc, Figma</p>
-              <input className="input" style={{ padding: '10px 12px', fontSize: 13, marginBottom: 10 }} placeholder="https://..." value={deliverableUrl} onChange={e => setDeliverableUrl(e.target.value)} />
-              <button className="btn-primary" style={{ padding: '11px', fontSize: 14, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }} onClick={() => doAction('Submitting', () => writeContract(address!, 'submit_work', [id, deliverableUrl]))} disabled={!deliverableUrl.startsWith('http') || txStatus === 'pending'}>Submit Work →</button>
+              <input className="input" style={{ padding: '10px 12px', fontSize: 13, marginBottom: 10 }} placeholder="https://..." value={deliverableUrl} onChange={e => setDeliverableUrl(e.target.value.replace(/^\s*deliverable_url\s*:\s*/i, ''))} />
+              {deliverableUrl && !isPublicUrl(deliverableUrl) && <p className="field-error">Enter the URL only, beginning with http:// or https://.</p>}
+              <button className="btn-primary" style={{ padding: '11px', fontSize: 14, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }} onClick={() => doAction('Submitting', () => writeContract(address!, 'submit_work', [id, deliverableUrl.trim()]))} disabled={!isPublicUrl(deliverableUrl) || txStatus === 'pending'}>Submit Work →</button>
             </div>
           )}
           {isClient && jobStatus === 'SUBMITTED' && (

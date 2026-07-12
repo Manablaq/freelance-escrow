@@ -6,7 +6,7 @@ import { SUCCESS_RESULTS } from "./genlayer-transaction-outcomes.mjs";
 
 const TRANSACTION_HASH =
   "0x22bc4de3aec4c628914e6e6fcd18485c0e0e5afd27d0838065e508aa4f58b107";
-const CONTRACT_ADDRESS = "0x881880971282774b6d83264d10EDDD8246576b88";
+const CONTRACT_ADDRESS = "0x75af88bfA0592CFA63c06f2F68BfD35C13dDd4EF";
 
 const client = createClient({ chain: testnetBradbury });
 

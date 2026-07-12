@@ -1,4 +1,8 @@
-export const CONTRACT_ADDRESS = '0x6d7e8fE1195919146f1cD7B4e1E1965af4Da101f' as `0x${string}`
+const configuredAddress = process.env.NEXT_PUBLIC_FREELANCE_MARKET_ADDRESS
+
+export const CONTRACT_ADDRESS = (configuredAddress || '0x75af88bfA0592CFA63c06f2F68BfD35C13dDd4EF') as `0x${string}`
+export const DEPLOYMENT_TX = '0x27a83352d39feda126c0d122a3e3223c238708c99f75bfddbb3bf280283902b1'
+export const NETWORK_LABEL = 'GenLayer Bradbury Testnet'
 
 export const BRADBURY_CHAIN = {
   id: 4221,

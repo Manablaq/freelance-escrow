@@ -28,10 +28,13 @@ export function usePolling<T>(
       initialId = setTimeout(() => { void run() }, 0)
     }
     timerRef.current = setInterval(run, intervalMs)
+    const onTransaction = () => { void run() }
+    window.addEventListener('freelance-market:refresh', onTransaction)
     return () => {
       mountedRef.current = false
       if (initialId) clearTimeout(initialId)
       if (timerRef.current) clearInterval(timerRef.current)
+      window.removeEventListener('freelance-market:refresh', onTransaction)
     }
   }, [run, intervalMs, immediate])
 

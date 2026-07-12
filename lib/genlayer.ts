@@ -15,6 +15,7 @@ export type Profile = {
   github?: string
   jobs_completed?: string
   total_earned?: string
+  registered_at?: string
 }
 
 export type Job = {
@@ -30,7 +31,16 @@ export type Job = {
   deliverable_url?: string
   ai_verdict?: string
   ai_reasoning?: string
+  ai_score?: string
+  ai_evidence_summary?: string
   escrow_balance?: string
+  client_name?: string
+  freelancer_name?: string
+  freelancer_rate?: string
+  freelancer_rate_type?: string
+  funded_at?: string
+  submitted_at?: string
+  resolved_at?: string
 }
 
 export type Stats = {
@@ -100,6 +110,10 @@ export async function writeContract(address: string, functionName: string, args:
     value: value ?? BigInt(0),
   })
   await client.waitForTransactionReceipt({ hash, status: TransactionStatus.ACCEPTED, interval: 4000, retries: 60 })
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('freelance-market:refresh', { detail: { functionName, hash } }))
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent('freelance-market:refresh', { detail: { functionName, hash } })), 1800)
+  }
   return hash
 }
 
@@ -130,4 +144,37 @@ export function timeAgo(isoStr: string) {
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
     return `${Math.floor(diff / 86400)}d ago`
   } catch { return '' }
+}
+
+export function isAddress(value: string) {
+  return /^0x[a-fA-F0-9]{40}$/.test(value.trim())
+}
+
+export function isJobId(value: string) {
+  return /^[1-9][0-9]*$/.test(value.trim())
+}
+
+export function isPublicUrl(value: string) {
+  if (/^\s*(deliverable_url|job_id)\s*:/i.test(value)) return false
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch { return false }
+}
+
+export function humanizeContractError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error)
+  const text = raw.replace(/^Error:\s*/i, '')
+  const known: Array<[RegExp, string]> = [
+    [/user rejected|rejected the request|denied/i, 'The wallet request was cancelled. No transaction was sent.'],
+    [/already registered/i, 'This wallet already has a profile. Open Dashboard to update it.'],
+    [/only clients|register as a client|not a client/i, 'This action requires a registered client wallet.'],
+    [/only the assigned freelancer|not a freelancer|specified address/i, 'This action requires the assigned registered freelancer wallet.'],
+    [/only the client/i, 'Connect the client wallet assigned to this job.'],
+    [/valid public url|malformed|invalid url/i, 'Enter a complete public http:// or https:// deliverable URL.'],
+    [/must send gen|payable|insufficient funds|no balance/i, 'Enter a GEN amount greater than zero and ensure the wallet has enough funds.'],
+    [/job .* not found|missing job/i, 'Enter an existing numeric job ID.'],
+    [/status|must be open|must be funded|must be submitted|refund only/i, 'This action is not available in the job’s current status. Refresh the job and try again.'],
+  ]
+  return known.find(([pattern]) => pattern.test(text))?.[1] || text.slice(0, 260) || 'The transaction could not be completed.'
 }

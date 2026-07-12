@@ -11,7 +11,7 @@ The live evidence does **not** identify a contract exception, web failure, LLM f
 
 ## Preserved Bradbury evidence
 
-- Contract: `0x881880971282774b6d83264d10EDDD8246576b88`
+- Contract: legacy pre-hosted deployment (retired; not used by the frontend)
 - Job: `1`
 - Original: `0x65084e3149c7cfa380f3282590fbfe737489dc530ac43918ad65bb62ae3a387b`
 - Retry 1: `0xd4f3eff1af3f3e8b6693a135d6912417b58756462c42d2b35935ed5f8c2d6277`

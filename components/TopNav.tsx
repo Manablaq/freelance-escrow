@@ -6,6 +6,8 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEffect, useState } from 'react'
 import { getProfile, type Profile } from '@/lib/genlayer'
 import { resolveGNS } from '@/lib/gns'
+import { CONTRACT_ADDRESS, NETWORK_LABEL } from '@/lib/config'
+import { shortAddress } from '@/lib/genlayer'
 
 function ThemeToggle() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -79,7 +81,9 @@ export function TopNav() {
     }
 
     void loadProfile()
-    return () => { cancelled = true }
+    const refreshProfile = () => { void loadProfile() }
+    window.addEventListener('freelance-market:refresh', refreshProfile)
+    return () => { cancelled = true; window.removeEventListener('freelance-market:refresh', refreshProfile) }
   }, [address, isConnected])
 
   const short = address ? `${address.slice(0, 6)}···${address.slice(-4)}` : ''
@@ -104,6 +108,7 @@ export function TopNav() {
 
         {/* Right */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <div className="network-pill" title={CONTRACT_ADDRESS}><span />{NETWORK_LABEL} · {shortAddress(CONTRACT_ADDRESS)}</div>
           <ThemeToggle />
 
           {!isConnected && (

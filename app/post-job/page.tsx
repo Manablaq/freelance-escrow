@@ -3,7 +3,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useAccount } from 'wagmi'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { TopNav } from '@/components/TopNav'
-import { writeContract, getProfile, type Profile } from '@/lib/genlayer'
+import { writeContract, getProfile, getStats, humanizeContractError, isAddress, type Profile } from '@/lib/genlayer'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 
 function PostJobContent() {
@@ -27,19 +27,21 @@ function PostJobContent() {
 
   const f = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
   const valid0 = form.title.length >= 3 && form.description.length >= 20 && form.deadline.length > 0
-  const valid1 = form.freelancer.length === 42 && form.freelancer.startsWith('0x')
+  const valid1 = isAddress(form.freelancer) && form.freelancer.toLowerCase() !== address?.toLowerCase()
 
   async function submit() {
     if (!address) return
     setTxStatus('submitting'); setErrMsg('')
     try {
-      await writeContract(address, 'create_job', [form.title, form.description, form.freelancer, form.deadline])
+      const before = await getStats()
+      await writeContract(address, 'create_job', [form.title.trim(), form.description.trim(), form.freelancer.trim(), form.deadline.trim()])
+      const after = await getStats().catch(() => null)
       setTxStatus('done')
-      setTimeout(() => router.push('/dashboard'), 1500)
+      const newId = after?.total_jobs && after.total_jobs !== before.total_jobs ? after.total_jobs : ''
+      setTimeout(() => router.push(newId ? `/job/${newId}` : '/dashboard'), 900)
     } catch (e: unknown) {
       setTxStatus('error')
-      const message = e instanceof Error ? e.message : String(e)
-      setErrMsg(message.slice(0, 200))
+      setErrMsg(humanizeContractError(e))
     }
   }
 
@@ -78,7 +80,7 @@ function PostJobContent() {
         <div className="panel" style={{ padding: '48px 24px', textAlign: 'center' }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
           <p className="font-display" style={{ fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Job posted!</p>
-          <p style={{ color: 'var(--muted)', fontSize: 13 }}>Redirecting to dashboard...</p>
+          <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading the accepted job state...</p>
         </div>
       ) : (
         <>
