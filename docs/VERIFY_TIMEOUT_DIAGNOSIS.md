@@ -1,6 +1,6 @@
 # `verify_and_release` timeout diagnosis
 
-Date: 2026-07-12  
+Date: 2026-07-12
 Scope: diagnosis only; no Bradbury write, deployment, key loading, frontend change, or smoke execution.
 
 ## Executive finding
