@@ -2,11 +2,19 @@
   "name": "freelance-escrow-frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:node": "node --test tests/*.test.mjs",
+    "test:python": "python3 -m unittest discover -s tests -v",
+    "test": "npm run test:node && npm run test:python",
+    "check:frontend": "npm run lint && npm run build",
+    "check": "npm run check:frontend && npm test",
     "inspect:deployment": "node scripts/inspect-freelance-market.mjs",
     "smoke:approval": "node scripts/smoke-freelance-market.mjs approval",
     "smoke:rejection": "node scripts/smoke-freelance-market.mjs rejection"

@@ -1,5 +1,7 @@
 # `verify_and_release` timeout diagnosis
 
+> Historical diagnostic evidence: this document concerns a retired pre-hosted deployment and is not the status of the current frontend contract. It is retained because it records the observed failure signature and test limitations.
+
 Date: 2026-07-12
 Scope: diagnosis only; no Bradbury write, deployment, key loading, frontend change, or smoke execution.
 

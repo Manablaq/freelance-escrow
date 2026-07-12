@@ -1,8 +1,25 @@
 # Bradbury real-wallet acceptance checklist
 
-All scenarios below are **UNVERIFIED** until completed with interactive funded GenLayer Bradbury wallets. Never reload the browser during a scenario.
+All scenarios below are **UNVERIFIED** until completed with interactive funded GenLayer Bradbury wallets and recorded in this file. Hosted Studio contract evidence does not establish browser-wallet behavior. Never reload the browser during a scenario.
+
+For each scenario, replace `UNVERIFIED` only when every field below has evidence. Never record private keys or seed phrases.
+
+| Field | Record |
+| --- | --- |
+| Status | UNVERIFIED |
+| Date tested (UTC) | — |
+| Tester | — |
+| Wallet role | — |
+| Job ID | — / not applicable |
+| Transaction hash | — |
+| Expected result | See scenario |
+| Observed result | — |
+| Pass/fail | UNVERIFIED |
+| Notes | — |
 
 ## Register client
+
+**Status: UNVERIFIED**
 
 - Start: `/register`, unregistered wallet selected as Client.
 - Progress: Preparing → wallet confirmation → submitted → ACCEPTED → synchronizing → confirmed.
@@ -13,6 +30,8 @@ All scenarios below are **UNVERIFIED** until completed with interactive funded G
 
 ## Register freelancer
 
+**Status: UNVERIFIED**
+
 - Start: `/register`, a different unregistered wallet selected as Freelancer.
 - Progress: same lifecycle as client registration.
 - Accepted state: `get_profile(freelancer)` returns `found`, role `freelancer`, and submitted fields.
@@ -21,6 +40,8 @@ All scenarios below are **UNVERIFIED** until completed with interactive funded G
 - Cross-check: marketplace/profile data update without reload.
 
 ## Create job
+
+**Status: UNVERIFIED**
 
 - Start: `/post-job`, registered client wallet, registered freelancer selected.
 - Progress: Preparing → wallet → submitted → ACCEPTED → synchronizing → confirmed.
@@ -31,6 +52,8 @@ All scenarios below are **UNVERIFIED** until completed with interactive funded G
 
 ## Fund job
 
+**Status: UNVERIFIED**
+
 - Start: `/job/[id]` in `OPEN`, assigned client wallet.
 - Expected state: `FUNDED` and `escrow_balance` exactly equals submitted GEN value.
 - Disappears: funding and cancellation controls.
@@ -38,6 +61,8 @@ All scenarios below are **UNVERIFIED** until completed with interactive funded G
 - Cross-check: client/freelancer dashboards and active escrow refresh without reload.
 
 ## Submit work
+
+**Status: UNVERIFIED**
 
 - Start: funded job, assigned freelancer wallet, public deliverable URL entered.
 - Expected state: `SUBMITTED` and stored `deliverable_url` exactly matches input.
@@ -47,13 +72,17 @@ All scenarios below are **UNVERIFIED** until completed with interactive funded G
 
 ## Approve and release
 
+**Status: UNVERIFIED**
+
 - Start: submitted job, assigned client wallet, approval-quality public evidence.
-- Expected state: `PAID`, zero escrow, and persisted verdict/reasoning/score/evidence fields where supported by the deployment.
+- Expected state: `PAID`, zero escrow, and persisted `ai_verdict` and `ai_reasoning` fields. The current contract does not persist the evaluator score or evidence summary.
 - Disappears: verification and settlement actions.
 - Appears: paid terminal state and AI-assisted result.
 - Cross-check: freelancer work totals and platform paid statistics refresh without reload.
 
 ## Reject and dispute
+
+**Status: UNVERIFIED**
 
 - Start: submitted job, assigned client wallet, evidence expected to fail the stored scope.
 - Expected state: `DISPUTED` with escrow retained according to the contract.
@@ -63,6 +92,8 @@ All scenarios below are **UNVERIFIED** until completed with interactive funded G
 
 ## Refund
 
+**Status: UNVERIFIED**
+
 - Start: `FUNDED` or `DISPUTED` job, assigned client wallet.
 - Expected state: `REFUNDED` and zero escrow.
 - Disappears: refund and all other write actions.
@@ -70,6 +101,8 @@ All scenarios below are **UNVERIFIED** until completed with interactive funded G
 - Cross-check: dashboards and active escrow refresh without reload.
 
 ## Cancel
+
+**Status: UNVERIFIED**
 
 - Start: unfunded `OPEN` job, assigned client wallet.
 - Expected state: `CANCELLED`.
