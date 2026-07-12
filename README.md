@@ -71,7 +71,7 @@ Bradbury transactions are shown after accepted state. GenExplorer may show accep
 - Page instructions are treated as untrusted. Inaccessible, empty, login-gated, unrelated, placeholder-only, insufficient, or malformed evidence fails closed and cannot release escrow.
 - Only the bounded verdict, score, reason, and evidence summary are returned; fetched webpage content is not persisted.
 
-These source changes address semantic-consensus and closure-serialization review findings. The deployed address listed above predates these source changes and does not contain them; a new contract deployment is required before they can be used on-chain. The frontend contract address has intentionally not been changed.
+These source changes address the semantic-consensus and closure-serialization review findings. The deployed Bradbury contract at `0x75af88bfA0592CFA63c06f2F68BfD35C13dDd4EF` matches `contracts/freelance_market.py`, and the production frontend uses this deployment.
 
 This is an AI-assisted escrow decision, not a legal ruling, guarantee of fairness, or proof of objective truth. Clear job descriptions and accessible deliverable URLs matter.
 
