@@ -125,10 +125,14 @@ docs/         Architecture, lifecycle, deployment, QA, diagnostics, and smoke ev
 
 ### Requirements
 
-- Node.js `>=20.9.0` (CI uses 20.9)
+- Node.js 24.x (CI also uses Node 24)
 - npm
 - Python 3 for the standard Python suite
 - A browser wallet configured for Bradbury only when manually exercising wallet flows
+
+With `nvm`, run `nvm use` from the repository root to select the Node.js version declared in `.nvmrc`.
+
+Node.js 24 is required because the Node test suites execute erasable TypeScript source directly through Node's native type stripping.
 
 ### Installation
 

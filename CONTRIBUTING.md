@@ -4,8 +4,8 @@ FreelanceMarket is a public testnet project. Contributions should keep source, t
 
 ## Setup
 
-1. Install Node.js 20.9 or newer, Python 3, and npm.
-2. Run `npm ci` from the repository root.
+1. Install Node.js 24.x, Python 3, and npm. With `nvm`, run `nvm use` to select the version declared in `.nvmrc`.
+2. Run `npm ci` from the repository root. Node.js 24 is required because the Node test suites execute erasable TypeScript source directly through Node's native type stripping.
 3. Optionally copy `.env.example` to `.env.local`. The checked-in contract fallback already targets the current Bradbury deployment.
 4. Run `npm run dev` for local development.
 
