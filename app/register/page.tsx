@@ -1,16 +1,15 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { AppShell, PageHeader } from "@/components/AppShell";
 import {
-  getProfile,
   isPublicUrl,
-  checkTransactionReceipt,
-  writeContract,
+  submitContract,
 } from "@/lib/genlayer";
 import { useTransactionSync } from "@/hooks/useTransactionSync";
+import { useTransactions } from "@/components/TransactionProvider";
 
 type Role = "client" | "freelancer";
 const initial = {
@@ -26,9 +25,12 @@ const initial = {
 export default function Register() {
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
+  const router = useRouter();
   const [role, setRole] = useState<Role | null>(null);
   const [form, setForm] = useState(initial);
   const transaction = useTransactionSync(address || "disconnected");
+  const { hasPendingEntityKey } = useTransactions();
+  const profilePending = Boolean(address && hasPendingEntityKey(address.toLowerCase()));
   const set = (k: keyof typeof form, v: string) =>
     setForm((x) => ({ ...x, [k]: v }));
   const validName = form.name.trim().length >= 2;
@@ -40,11 +42,16 @@ export default function Register() {
     (!form.portfolio || isPublicUrl(form.portfolio));
   async function submit() {
     if (!address || !role || !valid) return;
+    const optimisticData = { ...form, name: form.name.trim(), bio: form.bio.trim(), skills: form.skills.trim(), portfolio: form.portfolio.trim(), twitter: form.twitter.trim(), github: form.github.trim(), role, address };
     await transaction.execute({
       label: "Register profile",
-      checkReceipt: (hash) => checkTransactionReceipt(address, hash),
+      method: "register",
+      entityType: "profile",
+      entityKey: address.toLowerCase(),
+      optimisticData,
+      confirmation: { kind: "register", role },
       submit: (lifecycle) =>
-        writeContract(
+        submitContract(
           address,
           "register",
           [
@@ -61,10 +68,7 @@ export default function Register() {
           undefined,
           lifecycle,
         ),
-      confirm: async (signal) => {
-        const profile = await getProfile(address, signal);
-        return Boolean(profile?.found) && profile.role === role;
-      },
+      onSubmitted: () => router.push(role === "freelancer" ? "/dashboard" : "/marketplace"),
     });
   }
   return (
@@ -91,21 +95,6 @@ export default function Register() {
             <button className="button primary" onClick={openConnectModal}>
               Connect wallet
             </button>
-          </div>
-        ) : transaction.state.phase === "confirmed" ? (
-          <div className="empty-card">
-            <span className="empty-icon">✓</span>
-            <h2>Profile accepted on-chain</h2>
-            <p>
-              Your {role} profile is ready. Accepted-state reads may take a
-              moment to appear throughout the app.
-            </p>
-            <Link
-              className="button primary"
-              href={role === "client" ? "/marketplace" : "/dashboard"}
-            >
-              {role === "client" ? "Find a freelancer" : "Open dashboard"}
-            </Link>
           </div>
         ) : (
           <div className="split-grid">
@@ -163,11 +152,11 @@ export default function Register() {
                     value={form.name}
                     onChange={(e) => set("name", e.target.value)}
                     placeholder="e.g. Ada Studio"
-                    maxLength={80}
+                    maxLength={60}
                     required
                   />
                   <span className="field-hint">
-                    At least 2 characters · {form.name.length}/80
+                    At least 2 characters · {form.name.length}/60
                   </span>
                 </div>
                 <div className="field">
@@ -182,9 +171,9 @@ export default function Register() {
                         ? "What kind of work do you commission?"
                         : "What do you do best, and what outcomes do you deliver?"
                     }
-                    maxLength={600}
+                    maxLength={300}
                   />
-                  <span className="field-hint">{form.bio.length}/600</span>
+                  <span className="field-hint">{form.bio.length}/300</span>
                 </div>
                 {role === "freelancer" && (
                   <>
@@ -197,6 +186,7 @@ export default function Register() {
                         onChange={(e) => set("skills", e.target.value)}
                         placeholder="Product design, React, Solidity"
                         required
+                        maxLength={200}
                       />
                       <span className="field-hint">
                         Comma-separated skills become marketplace filters.
@@ -214,6 +204,7 @@ export default function Register() {
                           onChange={(e) => set("rate", e.target.value)}
                           placeholder="10"
                           required
+                          maxLength={20}
                         />
                       </div>
                       <div className="field">
@@ -241,6 +232,7 @@ export default function Register() {
                           form.portfolio && !isPublicUrl(form.portfolio),
                         )}
                         aria-describedby="portfolio-error"
+                        maxLength={200}
                       />
                       {form.portfolio && !isPublicUrl(form.portfolio) && (
                         <span className="field-error" id="portfolio-error">
@@ -274,7 +266,7 @@ export default function Register() {
                 )}
                 <button
                   className="button primary"
-                  disabled={!valid || transaction.pending}
+                  disabled={!valid || transaction.pending || profilePending}
                   onClick={() => void submit()}
                 >
                   {transaction.pending ? (

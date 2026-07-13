@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { TopNav } from "./TopNav";
-import { GlobalTransactionProgress } from "./GlobalTransactionProgress";
+import { TransactionTray } from "./TransactionProvider";
 import { CONTRACT_ADDRESS, NETWORK_LABEL } from "@/lib/config";
 
 const explorer = `https://explorer-bradbury.genlayer.com/address/${CONTRACT_ADDRESS}`;
@@ -12,7 +12,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         Skip to main content
       </a>
       <TopNav />
-      <GlobalTransactionProgress />
+      <TransactionTray />
       <main className="site-main" id="main-content">
         {children}
       </main>

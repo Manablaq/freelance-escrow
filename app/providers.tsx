@@ -10,6 +10,7 @@ import "@rainbow-me/rainbowkit/styles.css";
 import { BRADBURY_CHAIN } from "@/lib/config";
 import { createConfig, http } from "wagmi";
 import { injected } from "wagmi/connectors";
+import { TransactionProvider } from "@/components/TransactionProvider";
 
 const walletConnectProjectId =
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim();
@@ -45,7 +46,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             overlayBlur: "large",
           })}
         >
-          {children}
+          <TransactionProvider>{children}</TransactionProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

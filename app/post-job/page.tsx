@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAccount } from "wagmi";
@@ -11,11 +11,11 @@ import {
   getJobsByClient,
   getProfile,
   isAddress,
-  checkTransactionReceipt,
-  writeContract,
+  submitContract,
   type Profile,
 } from "@/lib/genlayer";
 import { useTransactionSync } from "@/hooks/useTransactionSync";
+import { useTransactions } from "@/components/TransactionProvider";
 
 function Form() {
   const { address, isConnected } = useAccount();
@@ -30,22 +30,14 @@ function Form() {
   const [deadline, setDeadline] = useState("");
   const [review, setReview] = useState(false);
   const transaction = useTransactionSync(address || "disconnected");
-  const knownJobIds = useRef(new Set<string>());
-  const createdJobId = useRef("");
+  const { hasPendingEntityKey } = useTransactions();
+  const createPending = Boolean(address && hasPendingEntityKey(`create:${address.toLowerCase()}`));
   useEffect(() => {
     if (!address) return;
     getProfile(address)
       .then((p) => setProfile(p?.found ? p : null))
       .catch(() => setProfile(null));
   }, [address]);
-  useEffect(() => {
-    if (
-      transaction.state.phase === "confirmed" &&
-      createdJobId.current
-    ) {
-      router.push(`/job/${createdJobId.current}`);
-    }
-  }, [router, transaction.state.phase]);
   const valid =
     title.trim().length >= 3 &&
     description.trim().length >= 20 &&
@@ -54,15 +46,17 @@ function Form() {
     freelancer.toLowerCase() !== address?.toLowerCase();
   async function submit() {
     if (!address || !valid) return;
-    const confirmed = await transaction.execute({
+    const existing = await getJobsByClient(address);
+    const knownJobIds = existing.map((job) => job.job_id || "");
+    await transaction.execute({
       label: "Create job",
-      checkReceipt: (hash) => checkTransactionReceipt(address, hash),
-      prepare: async () => {
-        const existing = await getJobsByClient(address);
-        knownJobIds.current = new Set(existing.map((job) => job.job_id || ""));
-      },
+      method: "create_job",
+      entityType: "job",
+      entityKey: `create:${address.toLowerCase()}`,
+      optimisticData: { title: title.trim(), description: description.trim(), freelancer: freelancer.trim(), deadline: deadline.trim() },
+      confirmation: { kind: "create_job", knownJobIds, expected: { client: address.toLowerCase(), freelancer: freelancer.trim().toLowerCase(), title: title.trim(), description: description.trim(), deadline: deadline.trim() } },
       submit: (lifecycle) =>
-        writeContract(
+        submitContract(
           address,
           "create_job",
           [
@@ -74,22 +68,8 @@ function Form() {
           undefined,
           lifecycle,
         ),
-      confirm: async (signal) => {
-        const jobs = await getJobsByClient(address, signal);
-        const match = jobs.find(
-          (job) =>
-            !knownJobIds.current.has(job.job_id || "") &&
-            job.client?.toLowerCase() === address.toLowerCase() &&
-            job.freelancer?.toLowerCase() === freelancer.trim().toLowerCase() &&
-            job.title === title.trim() &&
-            job.description === description.trim() &&
-            job.deadline === deadline.trim(),
-        );
-        if (match?.job_id) createdJobId.current = match.job_id;
-        return Boolean(match?.job_id);
-      },
+      onSubmitted: () => { setReview(false); router.push("/dashboard"); },
     });
-    if (confirmed) setReview(false);
   }
   if (!isConnected)
     return (
@@ -138,12 +118,12 @@ function Form() {
               className="input"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              maxLength={120}
+              maxLength={100}
               placeholder="e.g. Design and implement a responsive checkout"
               required
             />
             <span className="field-hint">
-              Be specific enough to identify the outcome · {title.length}/120
+              Be specific enough to identify the outcome · {title.length}/100
             </span>
           </div>
           <div className="field">
@@ -157,6 +137,7 @@ function Form() {
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Describe the deliverable, required behavior, evidence, and objective acceptance checks."
               required
+              maxLength={1000}
             />
             <span className="field-hint">
               Minimum 20 characters. The contract stores this as the description
@@ -172,6 +153,7 @@ function Form() {
               onChange={(e) => setDeadline(e.target.value)}
               placeholder="e.g. 2026-08-15 or agreed milestone date"
               required
+              maxLength={30}
             />
             <span className="field-hint">
               The contract stores the exact text entered here.
@@ -202,7 +184,7 @@ function Form() {
           </div>
           <button
             className="button primary"
-            disabled={!valid}
+            disabled={!valid || createPending}
             onClick={() => setReview(true)}
           >
             Review job
@@ -260,7 +242,7 @@ function Form() {
               >
                 <button
                   className="button secondary"
-                  disabled={transaction.pending}
+                  disabled={transaction.pending || createPending}
                   onClick={() => setReview(false)}
                 >
                   Keep editing

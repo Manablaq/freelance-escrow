@@ -12,11 +12,12 @@ import {
   getJob,
   isJobId,
   isPublicUrl,
-  checkTransactionReceipt,
-  writeContract,
+  submitContract,
 } from "@/lib/genlayer";
 import { usePolling } from "@/hooks/usePolling";
 import { useTransactionSync } from "@/hooks/useTransactionSync";
+import type { ConfirmationDescriptor, PendingEntityType } from "@/lib/pending-transactions";
+import { useTransactions } from "@/components/TransactionProvider";
 
 const terminal = ["PAID", "REFUNDED", "CANCELLED"];
 const explanation: Record<string, string> = {
@@ -38,30 +39,33 @@ export default function JobPage() {
     data: j,
     loading,
     error: loadError,
-    refetch,
   } = usePolling(fetcher, 5000);
   const [amount, setAmount] = useState("");
   const [url, setUrl] = useState("");
   const transaction = useTransactionSync(`${address || "disconnected"}:${id}`);
+  const { hasPendingEntityKey } = useTransactions();
+  const jobActionPending = hasPendingEntityKey(id);
   async function act(
     label: string,
     method: string,
     args: unknown[],
-    confirm: (signal: AbortSignal) => Promise<boolean>,
+    entityType: PendingEntityType,
+    confirmation: ConfirmationDescriptor,
+    optimisticData: Record<string, unknown> = {},
     value?: bigint,
   ) {
     if (!address) return false;
-    const confirmed = await transaction.execute({
+    const result = await transaction.execute({
       label,
-      checkReceipt: (hash) => checkTransactionReceipt(address, hash),
+      method,
+      entityType,
+      entityKey: id,
+      optimisticData,
+      confirmation,
       submit: (lifecycle) =>
-        writeContract(address, method, args, value, lifecycle),
-      confirm,
+        submitContract(address, method, args, value, lifecycle),
     });
-    if (confirmed) {
-      await refetch();
-    }
-    return confirmed;
+    return result.submitted;
   }
   if (!isJobId(id))
     return (
@@ -276,7 +280,7 @@ export default function JobPage() {
                       />
                       <button
                         className="button primary"
-                        disabled={!validAmount || transaction.pending}
+                        disabled={!validAmount || transaction.pending || jobActionPending}
                         style={{ width: "100%", marginTop: 10 }}
                         onClick={() => {
                           const expected = parseEther(amount as `${number}`);
@@ -284,15 +288,11 @@ export default function JobPage() {
                             "Fund escrow",
                             "fund_job",
                             [id],
-                            async (signal) => {
-                              const next = await getJob(id, signal);
-                              return (
-                                next.status === "FUNDED" &&
-                                BigInt(next.escrow_balance || "0") === expected
-                              );
-                            },
+                            "funding",
+                            { kind: "job_state", jobId: id, statuses: ["FUNDED"], balance: expected.toString() },
+                            { amount: expected.toString() },
                             expected,
-                          ).then((confirmed) => confirmed && setAmount(""));
+                          );
                         }}
                       >
                         Lock GEN
@@ -325,7 +325,7 @@ export default function JobPage() {
                       )}
                       <button
                         className="button primary"
-                        disabled={!isPublicUrl(url) || transaction.pending}
+                        disabled={!isPublicUrl(url) || transaction.pending || jobActionPending}
                         style={{ width: "100%", marginTop: 10 }}
                         onClick={() => {
                           const expectedUrl = url.trim();
@@ -333,14 +333,10 @@ export default function JobPage() {
                             "Submit work",
                             "submit_work",
                             [id, expectedUrl],
-                            async (signal) => {
-                              const next = await getJob(id, signal);
-                              return (
-                                next.status === "SUBMITTED" &&
-                                next.deliverable_url === expectedUrl
-                              );
-                            },
-                          ).then((confirmed) => confirmed && setUrl(""));
+                            "submission",
+                            { kind: "job_state", jobId: id, statuses: ["SUBMITTED"], deliverableUrl: expectedUrl },
+                            { deliverableUrl: expectedUrl },
+                          );
                         }}
                       >
                         Submit evidence
@@ -357,18 +353,14 @@ export default function JobPage() {
                       </p>
                       <button
                         className="button primary"
-                        disabled={transaction.pending}
+                        disabled={transaction.pending || jobActionPending}
                         onClick={() =>
                           void act(
                             "AI-assisted verification",
                             "verify_and_release",
                             [id],
-                            async (signal) => {
-                              const next = await getJob(id, signal);
-                              return ["PAID", "DISPUTED"].includes(
-                                next.status || "",
-                              );
-                            },
+                            "settlement",
+                            { kind: "job_state", jobId: id, statuses: ["PAID", "DISPUTED"] },
                           )
                         }
                       >
@@ -379,19 +371,14 @@ export default function JobPage() {
                   {canRefund && (
                     <button
                       className="button danger"
-                      disabled={transaction.pending}
+                      disabled={transaction.pending || jobActionPending}
                       onClick={() =>
                         void act(
                           "Refund escrow",
                           "client_refund",
                           [id],
-                          async (signal) => {
-                            const next = await getJob(id, signal);
-                            return (
-                              next.status === "REFUNDED" &&
-                              BigInt(next.escrow_balance || "0") === BigInt(0)
-                            );
-                          },
+                          "settlement",
+                          { kind: "job_state", jobId: id, statuses: ["REFUNDED"], balance: "0" },
                         )
                       }
                     >
@@ -401,14 +388,14 @@ export default function JobPage() {
                   {canCancel && (
                     <button
                       className="button secondary"
-                      disabled={transaction.pending}
+                      disabled={transaction.pending || jobActionPending}
                       onClick={() =>
                         void act(
                           "Cancel job",
                           "cancel_job",
                           [id],
-                          async (signal) =>
-                            (await getJob(id, signal)).status === "CANCELLED",
+                          "settlement",
+                          { kind: "job_state", jobId: id, statuses: ["CANCELLED"] },
                         )
                       }
                     >

@@ -5,6 +5,7 @@ import { useAccount, useDisconnect } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useEffect, useState } from "react";
 import { getProfile, shortAddress, type Profile } from "@/lib/genlayer";
+import { useTransactions } from "./TransactionProvider";
 
 const links = [
   { href: "/", label: "Home" },
@@ -22,6 +23,8 @@ export function TopNav() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileAddress, setProfileAddress] = useState("");
   const [menu, setMenu] = useState(false);
+  const { getPendingTransactions } = useTransactions();
+  const pendingCount = getPendingTransactions().length;
   useEffect(() => {
     let live = true;
     if (!address) return;
@@ -71,6 +74,7 @@ export function TopNav() {
           ))}
         </div>
         <div className="nav-actions">
+          {pendingCount > 0 && <span className="nav-pending" title="Transactions continuing in the background">{pendingCount} pending</span>}
           <span className="network-badge">
             <i />
             Bradbury

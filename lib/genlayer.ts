@@ -1,12 +1,9 @@
 import { CONTRACT_ADDRESS } from "./config";
 import {
-  TransactionStatus,
   type GenLayerTransaction,
 } from "genlayer-js/types";
 import {
-  checkReceiptUsingStructuredReads,
   classifyReceipt,
-  type ReceiptCheckResult,
 } from "./receipt-classifier";
 
 export type Profile = {
@@ -57,8 +54,6 @@ export type Stats = {
   total_freelancers?: string;
 };
 
-export const TX_POLL_INTERVAL_MS = 4000;
-export const TX_TIMEOUT_MS = 10 * 60 * 1000;
 export type WriteLifecycleCallbacks = {
   onAwaitingWallet?: () => void;
   onSubmitted?: (hash: string) => void;
@@ -135,12 +130,6 @@ async function getClient(address: string) {
       args: unknown[];
       value: bigint;
     }) => Promise<string>;
-    waitForTransactionReceipt: (request: {
-      hash: string;
-      status: TransactionStatus;
-      interval: number;
-      retries: number;
-    }) => Promise<GenLayerTransaction>;
     getTransaction: (request: { hash: string }) => Promise<GenLayerTransaction>;
   };
   try {
@@ -149,7 +138,7 @@ async function getClient(address: string) {
   return client;
 }
 
-export async function writeContract(
+export async function submitContract(
   address: string,
   functionName: string,
   args: unknown[],
@@ -167,33 +156,17 @@ export async function writeContract(
     value: value ?? BigInt(0),
   });
   lifecycle.onSubmitted?.(hash);
-  const receiptResult = await checkTransactionReceipt(address, hash, client);
-  if (receiptResult.kind === "executed") lifecycle.onAccepted?.(hash);
-  return receiptResult;
+  return hash;
 }
 
-export async function checkTransactionReceipt(
-  address: string,
-  hash: string,
-  existingClient?: Awaited<ReturnType<typeof getClient>>,
-): Promise<ReceiptCheckResult> {
-  let client: Awaited<ReturnType<typeof getClient>>;
+/** One structured read for global bounded-backoff polling. */
+export async function checkTransactionReceiptOnce(address: string, hash: string) {
   try {
-    client = existingClient ?? (await getClient(address));
+    const client = await getClient(address);
+    return classifyReceipt(hash, await client.getTransaction({ hash }));
   } catch {
     return classifyReceipt(hash, undefined);
   }
-  return checkReceiptUsingStructuredReads(
-    hash,
-    (existingHash) =>
-      client.waitForTransactionReceipt({
-        hash: existingHash,
-        status: TransactionStatus.ACCEPTED,
-        interval: 4000,
-        retries: 60,
-      }),
-    (existingHash) => client.getTransaction({ hash: existingHash }),
-  );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

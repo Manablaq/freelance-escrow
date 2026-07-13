@@ -10,6 +10,7 @@ import {
 } from "@/components/AppShell";
 import { getAllFreelancers, shortAddress, type Profile } from "@/lib/genlayer";
 import { usePolling } from "@/hooks/usePolling";
+import { PendingProfileCard } from "@/components/PendingProfileCard";
 
 const skills = (p: Profile) =>
   (p.skills || "")
@@ -59,6 +60,7 @@ export default function Marketplace() {
           }
           description="Browse freelancer profiles registered on the FreelanceMarket contract. Hire directly into a transparent escrow workflow."
         />
+        <PendingProfileCard fallback={null} />
         <div className="toolbar">
           <div className="search-wrap">
             <span>⌕</span>

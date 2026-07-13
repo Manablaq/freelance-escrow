@@ -25,6 +25,8 @@ test("classifies structured GenLayer receipt outcomes", () => {
     [TransactionStatus.PROPOSING, ExecutionResult.NOT_VOTED, "processing"],
     [TransactionStatus.COMMITTING, ExecutionResult.NOT_VOTED, "processing"],
     [TransactionStatus.REVEALING, ExecutionResult.NOT_VOTED, "processing"],
+    [TransactionStatus.LEADER_TIMEOUT, ExecutionResult.NOT_VOTED, "processing"],
+    [TransactionStatus.VALIDATORS_TIMEOUT, ExecutionResult.NOT_VOTED, "processing"],
   ];
 
   for (const [status, execution, expected] of cases) {

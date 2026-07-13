@@ -76,6 +76,22 @@ See [Deployment reference](docs/DEPLOYMENT.md) and [Hosted Studio full-flow evid
 
 ## Transaction synchronization
 
+Writes use an optimistic, non-blocking lifecycle. The page owns preparation and
+wallet signing only. As soon as a hash exists, a versioned serializable pending
+record is stored, the conflicting action is disabled, and the app remains
+navigable. A global provider continues receipt checks across route changes and
+refreshes with exponential backoff from 2 seconds to a 10-second maximum.
+
+Pending records use `freelance-market:pending-transactions:v1` with the shape
+`{ version: 1, transactions: [...] }`. Every entry includes chain ID, deployed
+contract, and wallet. Other-wallet entries remain persisted but paused.
+
+Acceptance is not success: processing/timeouts stay pending,
+`FINISHED_WITH_ERROR` fails even with `ACCEPTED`, and only
+`FINISHED_WITH_RETURN` advances to a method-specific expected-state read.
+Registration shows the submitted form as Pending with its hash and explorer
+link until the profile read proves the role and existence.
+
 ```text
 Wallet request
 → transaction hash

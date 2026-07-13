@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
@@ -20,13 +20,14 @@ import {
   getProfile,
   isJobId,
   timeAgo,
-  checkTransactionReceipt,
-  writeContract,
+  submitContract,
   type Job,
   type Profile,
 } from "@/lib/genlayer";
 import { usePolling } from "@/hooks/usePolling";
 import { useTransactionSync } from "@/hooks/useTransactionSync";
+import { PendingProfileCard } from "@/components/PendingProfileCard";
+import { useTransactions } from "@/components/TransactionProvider";
 
 export default function Dashboard() {
   const { address, isConnected } = useAccount();
@@ -37,11 +38,8 @@ export default function Dashboard() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Partial<Profile>>({});
   const transaction = useTransactionSync(address || "disconnected");
-  useEffect(() => {
-    if (transaction.state.phase !== "confirmed") return;
-    const closeId = window.setTimeout(() => setEditing(false), 0);
-    return () => window.clearTimeout(closeId);
-  }, [transaction.state.phase]);
+  const { hasPendingEntityKey } = useTransactions();
+  const profilePending = Boolean(address && hasPendingEntityKey(address.toLowerCase()));
   const pf = useCallback(
     () => (address ? getProfile(address) : Promise.resolve(null)),
     [address],
@@ -57,7 +55,6 @@ export default function Dashboard() {
   const {
     data: profile,
     loading: profileLoading,
-    refetch: reloadProfile,
   } = usePolling(pf, 8000);
   const p = profile?.found ? profile : null;
   const { data: cJobs, loading: cLoading } = usePolling(cf, 5000);
@@ -106,28 +103,23 @@ export default function Dashboard() {
       twitter: form.twitter || "",
       github: form.github || "",
     };
-    const confirmed = await transaction.execute({
+    await transaction.execute({
       label: "Update profile",
-      checkReceipt: (hash) => checkTransactionReceipt(address, hash),
+      method: "update_profile",
+      entityType: "profile",
+      entityKey: address.toLowerCase(),
+      optimisticData: expected,
+      confirmation: { kind: "update_profile", expected },
       submit: (lifecycle) =>
-        writeContract(
+        submitContract(
           address,
           "update_profile",
           Object.values(expected),
           undefined,
           lifecycle,
         ),
-      confirm: async (signal) => {
-        const updated = await getProfile(address, signal);
-        return (Object.keys(expected) as Array<keyof typeof expected>).every(
-          (key) => updated[key] === expected[key],
-        );
-      },
+      onSubmitted: () => setEditing(false),
     });
-    if (confirmed) {
-      setEditing(false);
-      await reloadProfile();
-    }
   }
   return (
     <AppShell>
@@ -145,7 +137,7 @@ export default function Dashboard() {
         ) : profileLoading ? (
           <SkeletonGrid count={3} />
         ) : !p ? (
-          <EmptyState
+          <PendingProfileCard fallback={<EmptyState
             title="No profile for this wallet"
             description="Register as a client or freelancer before using the workspace."
             action={
@@ -153,7 +145,7 @@ export default function Dashboard() {
                 Create profile
               </Link>
             }
-          />
+          />} />
         ) : (
           <>
             <PageHeader
@@ -344,7 +336,7 @@ export default function Dashboard() {
                       <button
                         className="button primary"
                         disabled={
-                          transaction.pending ||
+                          transaction.pending || profilePending ||
                           (form.name || "").trim().length < 2
                         }
                         onClick={() => void save()}
