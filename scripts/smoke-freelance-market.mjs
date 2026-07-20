@@ -649,15 +649,106 @@ function validateReceiptResult(value) {
   return value;
 }
 
+const GEN_CALL_FULL_RESULT_KEYS = ["data", "eqOutputs", "events", "logs", "messages",
+  "nondetDisagreementCallNo", "status", "stderr", "stdout", "syncedBlock"];
+const GEN_CALL_LOG_REQUIRED_KEYS = ["file", "level", "message", "target", "ts"];
+const GEN_CALL_LOG_KEY_SETS = [
+  GEN_CALL_LOG_REQUIRED_KEYS,
+  [...GEN_CALL_LOG_REQUIRED_KEYS, "version"],
+  [...GEN_CALL_LOG_REQUIRED_KEYS, "genvm_id"],
+  [...GEN_CALL_LOG_REQUIRED_KEYS, "metrics"],
+];
+const GEN_CALL_MAX_DATA_BYTES = 1024 * 1024;
+const GEN_CALL_MAX_TEXT_LENGTH = 1024 * 1024;
+const GEN_CALL_MAX_LOG_ENTRIES = 1024;
+
+function boundedString(value, maximumLength, { allowEmpty = true } = {}) {
+  return typeof value === "string" && value.length <= maximumLength && (allowEmpty || value.length > 0);
+}
+
+function exactGenCallObjectKeys(value, allowed, required = allowed) {
+  if (!plainObject(value)) return false;
+  const keys = Reflect.ownKeys(Object.getOwnPropertyDescriptors(value));
+  return keys.every((key) => typeof key === "string" && allowed.includes(key)) &&
+    required.every((key) => keys.includes(key));
+}
+
+function boundedDataArray(value, maximumLength, validator) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > maximumLength) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string") ||
+      Object.keys(descriptors).some((key) => key !== "length" && !/^(?:0|[1-9]\d*)$/.test(key))) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !Object.hasOwn(descriptor, "value") || descriptor.get !== undefined || descriptor.set !== undefined ||
+        !validator(descriptor.value)) return false;
+  }
+  return Object.keys(descriptors).length === value.length + 1;
+}
+
+function validGenCallData(value, { allowEmpty = false, maximumBytes = GEN_CALL_MAX_DATA_BYTES } = {}) {
+  if (typeof value !== "string" || !/^(?:0x)?(?:[0-9a-fA-F]{2})*$/.test(value)) return false;
+  const unprefixed = value.startsWith("0x") ? value.slice(2) : value;
+  return (allowEmpty || unprefixed.length > 0) && unprefixed.length / 2 <= maximumBytes;
+}
+
+function validateGenCallStatus(value) {
+  return exactGenCallObjectKeys(value, ["code", "message"]) && Number.isSafeInteger(value.code) &&
+    boundedString(value.message, 65_536);
+}
+
+function nonNegativeSafeInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function validateGenCallMetrics(value) {
+  return exactGenCallObjectKeys(value, ["gvm", "llm", "web"]) && value.llm === null && value.web === null &&
+    exactGenCallObjectKeys(value.gvm, ["host", "llm_module", "supervisor", "web_module"]) &&
+    exactGenCallObjectKeys(value.gvm.host, ["time"]) && nonNegativeSafeInteger(value.gvm.host.time) &&
+    exactGenCallObjectKeys(value.gvm.llm_module, ["calls", "time"]) &&
+    nonNegativeSafeInteger(value.gvm.llm_module.calls) && nonNegativeSafeInteger(value.gvm.llm_module.time) &&
+    exactGenCallObjectKeys(value.gvm.supervisor, ["compilation_time", "compiled_modules", "precompile_hits"]) &&
+    nonNegativeSafeInteger(value.gvm.supervisor.compilation_time) &&
+    nonNegativeSafeInteger(value.gvm.supervisor.compiled_modules) &&
+    nonNegativeSafeInteger(value.gvm.supervisor.precompile_hits) &&
+    exactGenCallObjectKeys(value.gvm.web_module, ["calls", "time"]) &&
+    nonNegativeSafeInteger(value.gvm.web_module.calls) && nonNegativeSafeInteger(value.gvm.web_module.time);
+}
+
+function validateGenCallLog(value) {
+  if (!GEN_CALL_LOG_KEY_SETS.some((keys) => exactGenCallObjectKeys(value, keys))) return false;
+  return boundedString(value.file, 512, { allowEmpty: false }) &&
+    typeof value.level === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(value.level) &&
+    boundedString(value.message, 65_536) && boundedString(value.target, 512, { allowEmpty: false }) &&
+    typeof value.ts === "string" && /^\d{1,20}$/.test(value.ts) &&
+    optionalField(value, "version", (entry) => boundedString(entry, 256, { allowEmpty: false })) &&
+    optionalField(value, "genvm_id", (entry) => boundedString(entry, 256, { allowEmpty: false })) &&
+    optionalField(value, "metrics", validateGenCallMetrics);
+}
+
+function validateFullGenCallResult(value) {
+  return exactGenCallObjectKeys(value, GEN_CALL_FULL_RESULT_KEYS) && validGenCallData(value.data) &&
+    boundedDataArray(value.eqOutputs, 0, () => false) &&
+    boundedDataArray(value.events, 0, () => false) &&
+    boundedDataArray(value.logs, GEN_CALL_MAX_LOG_ENTRIES, validateGenCallLog) &&
+    boundedDataArray(value.messages, 0, () => false) && value.nondetDisagreementCallNo === null &&
+    validateGenCallStatus(value.status) && boundedString(value.stderr, GEN_CALL_MAX_TEXT_LENGTH) &&
+    boundedString(value.stdout, GEN_CALL_MAX_TEXT_LENGTH) && validQuantity(value.syncedBlock) && value.syncedBlock.length <= 66;
+}
+
+function validateGenCallResult(result) {
+  const direct = validGenCallData(result);
+  const minimalWrapper = exactGenCallObjectKeys(result, ["data", "status"]) && validGenCallData(result.data) &&
+    validateGenCallStatus(result.status);
+  if (!direct && !minimalWrapper && !validateFullGenCallResult(result)) {
+    throw fixedRpcError("gen_call", "RESULT_INVALID");
+  }
+  return result;
+}
+
 function validateRpcResult(method, result) {
   if (method === "gen_call") {
-    const direct = typeof result === "string" && /^(?:0x)?(?:[0-9a-fA-F]{2})*$/.test(result) && result.replace(/^0x/, "").length > 0;
-    const wrapped = exactObjectKeys(result, ["data", "status"]) &&
-      typeof result.data === "string" && /^(?:0x)?(?:[0-9a-fA-F]{2})*$/.test(result.data) && result.data.replace(/^0x/, "").length > 0 &&
-      exactObjectKeys(result.status, ["code", "message"]) && Number.isSafeInteger(result.status.code) &&
-      typeof result.status.message === "string";
-    if (!direct && !wrapped) throw fixedRpcError(method, "RESULT_INVALID");
-    return result;
+    return validateGenCallResult(result);
   }
   if (new Set(["eth_getBalance", "eth_getTransactionCount", "eth_estimateGas", "eth_gasPrice"]).has(method)) {
     if (!validQuantity(result)) throw fixedRpcError(method, "RESULT_INVALID");
@@ -793,6 +884,7 @@ export function projectTransactionState(transaction, requestedHash) {
 }
 
 function normalizedGenCallData(result) {
+  result = validateGenCallResult(result);
   if (plainObject(result)) {
     if (result.status.code !== 0) throw safeError("CONTRACT_VIEW_EXECUTION_FAILED");
     result = result.data;

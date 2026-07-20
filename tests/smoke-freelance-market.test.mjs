@@ -299,6 +299,40 @@ function rpcResult(id, result) {
   return { ok: true, text: async () => JSON.stringify({ jsonrpc: "2.0", id, result }) };
 }
 
+function encodedContractJson(value) {
+  return Buffer.from(genlayerAbi.calldata.encode(JSON.stringify(value))).toString("hex");
+}
+
+function syntheticBradburyGenCallResult(data) {
+  return {
+    data,
+    eqOutputs: [],
+    events: [],
+    logs: [
+      { file: "runtime.rs", level: "INFO", message: "started", target: "genvm", ts: "1784558796000",
+        version: "1.0.0" },
+      { file: "executor.rs", genvm_id: "abc123", level: "INFO", message: "ready", target: "executor",
+        ts: "1784558796001" },
+      { file: "metrics.rs", level: "INFO", message: "metrics", metrics: {
+        gvm: {
+          host: { time: 1 }, llm_module: { calls: 0, time: 0 },
+          supervisor: { compilation_time: 1, compiled_modules: 1, precompile_hits: 0 },
+          web_module: { calls: 0, time: 0 },
+        },
+        llm: null,
+        web: null,
+      }, target: "genvm", ts: "1784558796002" },
+      { file: "executor.rs", level: "INFO", message: "completed", target: "executor", ts: "1784558796003" },
+    ],
+    messages: [],
+    nondetDisagreementCallNo: null,
+    status: { code: 0, message: "success" },
+    stderr: "",
+    stdout: "",
+    syncedBlock: "0x1234",
+  };
+}
+
 test("historical Bradbury raw fixtures authenticate before decoding", () => {
   const { manifest, files } = loadAuthenticatedBradburyFixtures();
   assert.equal(manifest.fixtures.length, 8);
@@ -1538,6 +1572,152 @@ test("JSON-RPC envelopes are closed and all raw failures are fixed and secret-sa
     const client = createBradburyRpcClient({ fetchFn });
     const error = await capturedFailure(() => client.rpc("eth_getBalance", [config.freelancer_address, "latest"]));
     assert.equal(error.message.includes(secret), false);
+  }
+});
+
+test("supported gen_call forms accept the Bradbury full wrapper and decode only its validated data", async () => {
+  const stats = { total_jobs: "2", total_paid: "10", total_freelancers: "1" };
+  const encoded = encodedContractJson(stats);
+  const full = syntheticBradburyGenCallResult(encoded);
+  assert.equal(validateJsonRpcResponse({ jsonrpc: "2.0", id: 1, result: full }, 1, "gen_call"), full);
+
+  for (const direct of [encoded, `0x${encoded}`]) {
+    assert.equal(validateJsonRpcResponse({ jsonrpc: "2.0", id: 1, result: direct }, 1, "gen_call"), direct);
+  }
+  for (const data of [encoded, `0x${encoded}`]) {
+    const minimal = { data, status: { code: 0, message: "success" } };
+    assert.equal(validateJsonRpcResponse({ jsonrpc: "2.0", id: 1, result: minimal }, 1, "gen_call"), minimal);
+  }
+
+  const client = createBradburyRpcClient({ projectionConfig: config, fetchFn: async (_url, request) => {
+    const { id, method } = JSON.parse(request.body);
+    assert.equal(method, "gen_call");
+    return rpcResult(id, full);
+  } });
+  assert.deepEqual(await client.readContract({ address: config.contract_address, functionName: "get_stats", args: [] }),
+    { total_jobs: "2", total_paid: "10" });
+});
+
+test("gen_call full wrapper and every nested collection fail closed with the fixed safe category", () => {
+  const encoded = encodedContractJson({ total_jobs: "2", total_paid: "10", total_freelancers: "1" });
+  const valid = syntheticBradburyGenCallResult(encoded);
+  const cases = [
+    (value) => { delete value.stdout; },
+    (value) => { value.extra = true; },
+    (value) => { value.data = "0x1"; },
+    (value) => { value.status = { code: "0", message: "success" }; },
+    (value) => { value.status = { code: 0, message: "success", extra: true }; },
+    (value) => { value.syncedBlock = "0x01"; },
+    (value) => { value.logs = [{}]; },
+    (value) => { value.logs[2].metrics.gvm.host.extra = 1; },
+    (value) => { value.events = ["unsupported"]; },
+    (value) => { value.messages = [{ messageType: 0, recipient: EXPECTED_CONTRACT_ADDRESS, value: "0", data: "0x",
+      onAcceptance: false, saltNonce: 0 }]; },
+    (value) => { value.eqOutputs = ["AA=="]; },
+    (value) => { value.nondetDisagreementCallNo = 0; },
+  ];
+  for (const mutate of cases) {
+    const malformed = structuredClone(valid);
+    mutate(malformed);
+    assert.equal(capturedThrow(() => validateJsonRpcResponse(
+      { jsonrpc: "2.0", id: 1, result: malformed }, 1, "gen_call")).message,
+    "RPC_CONTRACT_VIEW_RESULT_INVALID");
+  }
+  for (const malformed of ["", "0x", "0x1", "xyz"]) {
+    assert.equal(capturedThrow(() => validateJsonRpcResponse(
+      { jsonrpc: "2.0", id: 1, result: malformed }, 1, "gen_call")).message,
+    "RPC_CONTRACT_VIEW_RESULT_INVALID");
+  }
+
+  const unsupportedLogCombinations = [
+    ["version", "genvm_id"],
+    ["version", "metrics"],
+    ["genvm_id", "metrics"],
+    ["version", "genvm_id", "metrics"],
+  ];
+  for (const fields of unsupportedLogCombinations) {
+    const malformed = structuredClone(valid);
+    const sourceByField = {
+      version: valid.logs[0].version,
+      genvm_id: valid.logs[1].genvm_id,
+      metrics: valid.logs[2].metrics,
+    };
+    malformed.logs[3] = { ...malformed.logs[3],
+      ...Object.fromEntries(fields.map((field) => [field, structuredClone(sourceByField[field])])) };
+    assert.equal(capturedThrow(() => validateJsonRpcResponse(
+      { jsonrpc: "2.0", id: 1, result: malformed }, 1, "gen_call")).message,
+    "RPC_CONTRACT_VIEW_RESULT_INVALID");
+  }
+});
+
+
+
+test("gen_call full wrapper rejects non-JSON object tricks, sparse arrays, and oversized fields", () => {
+  const encoded = encodedContractJson({ total_jobs: "2", total_paid: "10", total_freelancers: "1" });
+  const validate = (result) => capturedThrow(() => validateJsonRpcResponse(
+    { jsonrpc: "2.0", id: 1, result }, 1, "gen_call")).message;
+
+  const hiddenExtra = syntheticBradburyGenCallResult(encoded);
+  Object.defineProperty(hiddenExtra, "hidden", { value: true, enumerable: false });
+  assert.equal(validate(hiddenExtra), "RPC_CONTRACT_VIEW_RESULT_INVALID");
+
+  const sparse = syntheticBradburyGenCallResult(encoded);
+  sparse.logs = new Array(1);
+  assert.equal(validate(sparse), "RPC_CONTRACT_VIEW_RESULT_INVALID");
+
+  const customArrayPrototype = syntheticBradburyGenCallResult(encoded);
+  Object.setPrototypeOf(customArrayPrototype.logs, Object.create(Array.prototype));
+  assert.equal(validate(customArrayPrototype), "RPC_CONTRACT_VIEW_RESULT_INVALID");
+
+  let accessorEvaluations = 0;
+  const accessor = syntheticBradburyGenCallResult(encoded);
+  Object.defineProperty(accessor.status, "code", { enumerable: true, get() {
+    accessorEvaluations += 1;
+    return 0;
+  } });
+  assert.equal(validate(accessor), "RPC_CONTRACT_VIEW_RESULT_INVALID");
+  assert.equal(accessorEvaluations, 0);
+
+  const oversizedData = syntheticBradburyGenCallResult("00".repeat((1024 * 1024) + 1));
+  assert.equal(validate(oversizedData), "RPC_CONTRACT_VIEW_RESULT_INVALID");
+
+  const oversizedOutput = syntheticBradburyGenCallResult(encoded);
+  oversizedOutput.stdout = "x".repeat((1024 * 1024) + 1);
+  assert.equal(validate(oversizedOutput), "RPC_CONTRACT_VIEW_RESULT_INVALID");
+
+  const oversizedLogs = syntheticBradburyGenCallResult(encoded);
+  oversizedLogs.logs = Array.from({ length: 1025 }, () => structuredClone(oversizedLogs.logs[0]));
+  assert.equal(validate(oversizedLogs), "RPC_CONTRACT_VIEW_RESULT_INVALID");
+
+  const unsafeMetric = syntheticBradburyGenCallResult(encoded);
+  unsafeMetric.logs[2].metrics.gvm.host.time = Number.MAX_SAFE_INTEGER + 1;
+  assert.equal(validate(unsafeMetric), "RPC_CONTRACT_VIEW_RESULT_INVALID");
+});
+
+test("invalid gen_call payloads never expose data, output, logs, messages, or auxiliary payloads", () => {
+  const secret = "DISTINCTIVE_GEN_CALL_PAYLOAD_SECRET";
+  const encodedSecret = Buffer.from(secret).toString("hex");
+  const malformed = syntheticBradburyGenCallResult(encodedSecret);
+  malformed.stdout = secret;
+  malformed.stderr = secret;
+  malformed.logs[0].message = secret;
+  malformed.messages = [{ payload: secret }];
+  malformed.eqOutputs = [Buffer.from(secret).toString("base64")];
+  const error = capturedThrow(() => validateJsonRpcResponse(
+    { jsonrpc: "2.0", id: 1, result: malformed }, 1, "gen_call"));
+  assert.equal(error.message, "RPC_CONTRACT_VIEW_RESULT_INVALID");
+  assert.equal(error.message.includes(secret), false);
+  assert.equal(safeProcessError(error).includes(secret), false);
+});
+
+test("contract-view projections still reject malformed profile, stats, and job results", () => {
+  const malformed = [
+    ["get_profile", { found: false, address: "malformed" }, { args: [config.freelancer_address], config }],
+    ["get_stats", { total_jobs: "-1", total_paid: "10", total_freelancers: "1" }, { args: [], config }],
+    ["get_job", { found: false, job_id: "0" }, { args: ["2"], config }],
+  ];
+  for (const [method, value, options] of malformed) {
+    assert.throws(() => projectContractViewResult(method, value, options), /(?:PROFILE|STATS|JOB)_RESPONSE_INVALID/);
   }
 });
 
