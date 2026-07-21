@@ -208,6 +208,11 @@ export function createBradburyWriterClient(account, createRpcClient = createBrad
   }
 }
 
+export function createLiveBradburyWriterRpcOptions(options = {}) {
+  if (!plainObject(options)) throw safeError("RPC_CLIENT_CONFIG_INVALID");
+  return { ...options, gasEstimateMultiplier: LIVE_BRADBURY_GAS_ESTIMATE_MULTIPLIER };
+}
+
 export function publicRuntimeMetadata(runtimeConfig) {
   return {
     flow: runtimeConfig.flow,
@@ -252,6 +257,8 @@ function currentTimestamp(now) {
 const BRADBURY_RPC_URL = testnetBradbury.rpcUrls.default.http[0];
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const BRADBURY_CONSENSUS_ADDRESS = testnetBradbury.consensusMainContract.address;
+const MAX_GAS_ESTIMATE_MULTIPLIER = 4;
+const LIVE_BRADBURY_GAS_ESTIMATE_MULTIPLIER = 2;
 const NEW_TRANSACTION_TOPIC = keccak256(stringToHex("NewTransaction(bytes32,address,address)"));
 const CREATED_TRANSACTION_TOPIC = keccak256(stringToHex("CreatedTransaction(bytes32,uint256)"));
 const RPC_ERROR_CODES = Object.freeze({
@@ -1064,9 +1071,13 @@ export function extractUniqueGenLayerTransactionId(logs, { evmHash, consensusAdd
 }
 
 export function createBradburyRpcClient({ account, fetchFn = globalThis.fetch, endpoint = BRADBURY_RPC_URL,
-  projectionConfig, receiptAttempts = 120, intervalMs = 5_000, sleepFn = sleep, now = Date.now } = {}) {
+  projectionConfig, receiptAttempts = 120, intervalMs = 5_000, sleepFn = sleep, now = Date.now,
+  gasEstimateMultiplier = 1 } = {}) {
   if (typeof fetchFn !== "function" || typeof endpoint !== "string" || !endpoint ||
-      !Number.isSafeInteger(receiptAttempts) || receiptAttempts <= 0 || !Number.isSafeInteger(intervalMs) || intervalMs < 0) {
+      !Number.isSafeInteger(receiptAttempts) || receiptAttempts <= 0 ||
+      !Number.isSafeInteger(intervalMs) || intervalMs < 0 ||
+      !Number.isSafeInteger(gasEstimateMultiplier) || gasEstimateMultiplier < 1 ||
+      gasEstimateMultiplier > MAX_GAS_ESTIMATE_MULTIPLIER) {
     throw safeError("RPC_CLIENT_CONFIG_INVALID");
   }
   let nextRequestId = 1;
@@ -1184,7 +1195,10 @@ export function createBradburyRpcClient({ account, fetchFn = globalThis.fetch, e
     const consensusAddress = BRADBURY_CONSENSUS_ADDRESS;
     const value = `0x${request.value.toString(16)}`;
     const nonce = BigInt(await rpc("eth_getTransactionCount", [account.address, "pending"]));
-    const gas = BigInt(await rpc("eth_estimateGas", [{ from: account.address, to: consensusAddress, data: consensusData, value }]));
+    const estimatedGas = BigInt(await rpc("eth_estimateGas", [
+      { from: account.address, to: consensusAddress, data: consensusData, value },
+    ]));
+    const gas = estimatedGas * BigInt(gasEstimateMultiplier);
     const gasPrice = BigInt(await rpc("eth_gasPrice", []));
     let serializedTransaction;
     try {
@@ -2678,6 +2692,7 @@ async function runWithJournalLock(flow, journalPath, lock) {
   const receiptAttempts = positiveInteger("SMOKE_RECEIPT_ATTEMPTS", 120);
   const intervalMs = positiveInteger("SMOKE_POLL_INTERVAL_MS", 5_000);
   const rpcOptions = { projectionConfig: journal.config, receiptAttempts, intervalMs };
+  const writerRpcOptions = createLiveBradburyWriterRpcOptions(rpcOptions);
   const readClient = createBradburyReadClient(createBradburyRpcClient, rpcOptions);
   const read = (functionName, args = []) =>
     readClient.readContract({ address: runtime.contractAddress, functionName, args });
@@ -2705,7 +2720,11 @@ async function runWithJournalLock(flow, journalPath, lock) {
           save,
           escrowWei,
           loadClientAccount: () => verifyConfiguredAccount(runtime, "client"),
-          createWriter: (account) => createBradburyWriterClient(account, createBradburyRpcClient, rpcOptions),
+          createWriter: (account) => createBradburyWriterClient(
+            account,
+            createBradburyRpcClient,
+            writerRpcOptions,
+          ),
           wait,
         });
       }
@@ -2718,8 +2737,8 @@ async function runWithJournalLock(flow, journalPath, lock) {
   }
 
   const { clientAccount, freelancerAccount } = verifyConfiguredAccounts(runtime);
-  const client = createBradburyWriterClient(clientAccount, createBradburyRpcClient, rpcOptions);
-  const freelancer = createBradburyWriterClient(freelancerAccount, createBradburyRpcClient, rpcOptions);
+  const client = createBradburyWriterClient(clientAccount, createBradburyRpcClient, writerRpcOptions);
+  const freelancer = createBradburyWriterClient(freelancerAccount, createBradburyRpcClient, writerRpcOptions);
 
   async function ensureRegistered(role, address, writer) {
     const stepName = `register_${role}`;

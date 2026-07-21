@@ -3398,3 +3398,196 @@ test("approval post-finalization bracketing detects a changed paid job before pe
   assert.equal(fixture.input.journal.status, "ACTIVE");
   assert.equal(fixture.input.journal.state.final_job, undefined);
 });
+
+test("gas estimate multiplier 2 doubles signed gas without changing estimation input or broadcast-guard timing", async () => {
+  const { createBradburyRpcClient } = await import("../scripts/smoke-freelance-market.mjs");
+  const baseAccount = privateKeyToAccount(TEST_PRIVATE_KEY);
+  const events = [];
+  const requests = [];
+  let signedTransaction;
+  let localHash;
+
+  const client = createBradburyRpcClient({
+    account: {
+      ...baseAccount,
+      signTransaction: async (transaction) => {
+        signedTransaction = transaction;
+        events.push("sign");
+        return baseAccount.signTransaction(transaction);
+      },
+    },
+    gasEstimateMultiplier: 2,
+    now: () => Date.parse(NOW),
+    receiptAttempts: 1,
+    intervalMs: 0,
+    fetchFn: async (_url, rawRequest) => {
+      const payload = JSON.parse(rawRequest.body);
+      requests.push(payload);
+
+      if (payload.method === "eth_getTransactionCount") {
+        return rpcResult(payload.id, "0x1");
+      }
+
+      if (payload.method === "eth_estimateGas") {
+        return rpcResult(payload.id, "0x30d40");
+      }
+
+      if (payload.method === "eth_gasPrice") {
+        return rpcResult(payload.id, "0x3b9aca00");
+      }
+
+      if (payload.method === "eth_sendRawTransaction") {
+        events.push("send");
+        localHash = keccak256(payload.params[0]);
+        return rpcResult(payload.id, localHash);
+      }
+
+      if (payload.method === "eth_getTransactionReceipt") {
+        assert.equal(payload.params[0], localHash);
+        return rpcResult(
+          payload.id,
+          successfulEvmReceipt(
+            [newTransactionLog(VERIFY_HASH, { transactionHash: localHash })],
+            { transactionHash: localHash },
+          ),
+        );
+      }
+
+      assert.fail(`unexpected method ${payload.method}`);
+    },
+  });
+
+  let guardCalls = 0;
+
+  const transactionId = await client.writeContract(
+    {
+      address: EXPECTED_CONTRACT_ADDRESS,
+      functionName: "verify_and_release",
+      args: ["2"],
+      value: 0n,
+    },
+    {
+      beforeRawBroadcast: () => {
+        guardCalls += 1;
+        events.push("guard");
+      },
+    },
+  );
+
+  assert.equal(transactionId, VERIFY_HASH);
+  assert.equal(signedTransaction.gas, 0x30d40n * 2n);
+
+  const estimateRequest = requests.find(
+    ({ method }) => method === "eth_estimateGas",
+  );
+
+  assert.deepEqual(estimateRequest.params, [
+    {
+      from: TEST_SIGNER,
+      to: CONSENSUS_ADDRESS,
+      data: EXPECTED_ADD_TRANSACTION_CALLDATA,
+      value: "0x0",
+    },
+  ]);
+
+  assert.equal(guardCalls, 1);
+  assert.deepEqual(events.slice(-2), ["guard", "send"]);
+});
+
+test("invalid gas estimate multipliers fail before RPC or signing side effects", async () => {
+  const { createBradburyRpcClient } = await import("../scripts/smoke-freelance-market.mjs");
+
+  for (const gasEstimateMultiplier of [
+    0,
+    -1,
+    1.5,
+    5,
+    Number.MAX_SAFE_INTEGER + 1,
+    Number.NaN,
+    "2",
+    null,
+  ]) {
+    let rpcCalls = 0;
+    let signingCalls = 0;
+
+    assert.throws(
+      () =>
+        createBradburyRpcClient({
+          account: {
+            address: TEST_SIGNER,
+            signTransaction: async () => {
+              signingCalls += 1;
+              return "0x01";
+            },
+          },
+          gasEstimateMultiplier,
+          fetchFn: async () => {
+            rpcCalls += 1;
+            throw new Error("must not perform RPC");
+          },
+        }),
+      /RPC_CLIENT_CONFIG_INVALID/,
+      String(gasEstimateMultiplier),
+    );
+
+    assert.equal(rpcCalls, 0, String(gasEstimateMultiplier));
+    assert.equal(signingCalls, 0, String(gasEstimateMultiplier));
+  }
+});
+
+test("all live Bradbury writer paths use multiplier 2 while read clients keep default options", async () => {
+  const { createLiveBradburyWriterRpcOptions } = await import(
+    "../scripts/smoke-freelance-market.mjs"
+  );
+  const { readFile } = await import("node:fs/promises");
+
+  const baseOptions = Object.freeze({
+    projectionConfig: {
+      contract_address: EXPECTED_CONTRACT_ADDRESS,
+    },
+    receiptAttempts: 120,
+    intervalMs: 5_000,
+  });
+
+  const writerOptions = createLiveBradburyWriterRpcOptions(baseOptions);
+
+  assert.deepEqual(writerOptions, {
+    ...baseOptions,
+    gasEstimateMultiplier: 2,
+  });
+
+  assert.equal(
+    Object.hasOwn(baseOptions, "gasEstimateMultiplier"),
+    false,
+  );
+
+  const source = await readFile(
+    new URL("../scripts/smoke-freelance-market.mjs", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /const writerRpcOptions = createLiveBradburyWriterRpcOptions\(rpcOptions\);/,
+  );
+
+  assert.match(
+    source,
+    /createBradburyReadClient\(createBradburyRpcClient,\s*rpcOptions\)/,
+  );
+
+  assert.match(
+    source,
+    /createWriter:\s*\(account\)\s*=>\s*createBradburyWriterClient\(\s*account,\s*createBradburyRpcClient,\s*writerRpcOptions,\s*\)/,
+  );
+
+  assert.match(
+    source,
+    /const client = createBradburyWriterClient\(clientAccount,\s*createBradburyRpcClient,\s*writerRpcOptions\);/,
+  );
+
+  assert.match(
+    source,
+    /const freelancer = createBradburyWriterClient\(freelancerAccount,\s*createBradburyRpcClient,\s*writerRpcOptions\);/,
+  );
+});
