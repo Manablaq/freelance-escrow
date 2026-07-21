@@ -718,8 +718,9 @@ function protocolWriter({ account = privateKeyToAccount(TEST_PRIVATE_KEY), recei
   return { client, sends: () => sends };
 }
 
+const OBSERVED_VALIDATOR_ACTIVATOR = "0x59dc5e6fd7428c5ee6fc24ae2b99e5860a9c9499";
 const creationEventContext = { evmHash: EXPECTED_LOCAL_EVM_HASH, consensusAddress: CONSENSUS_ADDRESS,
-  expectedRecipient: EXPECTED_CONTRACT_ADDRESS, expectedActivator: TEST_SIGNER };
+  expectedRecipient: EXPECTED_CONTRACT_ADDRESS };
 
 function pinnedRoundData() {
   return { round: 1n, leaderIndex: 0n, votesCommitted: 1n, votesRevealed: 1n, appealBond: 0n,
@@ -1857,6 +1858,41 @@ test("exact pinned creation event fixtures decode indexed IDs and ignore only un
   assert.equal(extractUniqueGenLayerTransactionId([createdTransactionLog()], creationEventContext), VERIFY_HASH);
 });
 
+test("writer accepts a valid NewTransaction activator distinct from the EVM signer", async () => {
+  const receipt = successfulEvmReceipt([newTransactionLog(VERIFY_HASH, {
+    topics: [
+      NEW_TRANSACTION_TOPIC,
+      VERIFY_HASH,
+      padHex(EXPECTED_CONTRACT_ADDRESS, { size: 32 }),
+      padHex(OBSERVED_VALIDATOR_ACTIVATOR, { size: 32 }),
+    ],
+  })]);
+  const fixture = protocolWriter({ receipt });
+  const txId = await fixture.client.writeContract({
+    address: EXPECTED_CONTRACT_ADDRESS,
+    functionName: "verify_and_release",
+    args: ["2"],
+    value: 0n,
+  });
+  assert.equal(txId, VERIFY_HASH);
+  assert.equal(fixture.sends(), 1);
+});
+
+test("NewTransaction rejects malformed activator encoding", () => {
+  const malformedActivator = newTransactionLog(VERIFY_HASH, {
+    topics: [
+      NEW_TRANSACTION_TOPIC,
+      VERIFY_HASH,
+      padHex(EXPECTED_CONTRACT_ADDRESS, { size: 32 }),
+      "0x1234",
+    ],
+  });
+  assert.throws(
+    () => extractUniqueGenLayerTransactionId([malformedActivator], creationEventContext),
+    /EVENT_DECODING/,
+  );
+});
+
 test("raw hash, receipt identity, emitter, event cardinality, event encoding, and status fail closed", async () => {
   const cases = [
     ["rpc-hash", { sendHash: OTHER_HASH }, /HASH_MISMATCH/],
@@ -1867,9 +1903,6 @@ test("raw hash, receipt identity, emitter, event cardinality, event encoding, an
     ["wrong-event-recipient", { receipt: successfulEvmReceipt([newTransactionLog(VERIFY_HASH,
       { topics: [NEW_TRANSACTION_TOPIC, VERIFY_HASH, padHex(EXPECTED_FREELANCER_ADDRESS, { size: 32 }),
         padHex(TEST_SIGNER, { size: 32 })] })]) }, /EVENT_DECODING/],
-    ["wrong-event-activator", { receipt: successfulEvmReceipt([newTransactionLog(VERIFY_HASH,
-      { topics: [NEW_TRANSACTION_TOPIC, VERIFY_HASH, padHex(EXPECTED_CONTRACT_ADDRESS, { size: 32 }),
-        padHex(EXPECTED_CLIENT_ADDRESS, { size: 32 })] })]) }, /EVENT_DECODING/],
     ["missing-event", { receipt: successfulEvmReceipt([{ ...newTransactionLog(), topics: [`0x${"12".repeat(32)}`] }]) }, /EVENT_COUNT/],
     ["duplicate-event", { receipt: successfulEvmReceipt([newTransactionLog(), newTransactionLog()]) }, /EVENT_COUNT/],
     ["conflicting-event", { receipt: successfulEvmReceipt([newTransactionLog(), createdTransactionLog(OTHER_HASH)]) }, /EVENT_COUNT/],

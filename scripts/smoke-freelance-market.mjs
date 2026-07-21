@@ -1032,9 +1032,9 @@ export function projectPinnedTransactionResponse({ transactionData, transactionA
 }
 
 export function extractUniqueGenLayerTransactionId(logs, { evmHash, consensusAddress = BRADBURY_CONSENSUS_ADDRESS,
-  expectedRecipient, expectedActivator } = {}) {
+  expectedRecipient } = {}) {
   if (!Array.isArray(logs) || !validHash(evmHash) || !sameAddress(consensusAddress, BRADBURY_CONSENSUS_ADDRESS) ||
-      !validAddress(expectedRecipient) || !validAddress(expectedActivator)) {
+      !validAddress(expectedRecipient)) {
     throw safeError("WRITE_TRANSACTION_EVENT_CONTEXT_INVALID");
   }
   const recognized = [];
@@ -1058,9 +1058,10 @@ export function extractUniqueGenLayerTransactionId(logs, { evmHash, consensusAdd
       throw safeError("WRITE_TRANSACTION_EVENT_DECODING_FAILED");
     }
     const txId = decoded.args?.txId;
+    // Activator is validated consensus-event metadata and may differ from the EVM signer.
     if (!validTransactionHash(txId) ||
         (eventName === "NewTransaction" && (!validAddress(decoded.args?.recipient) || !validAddress(decoded.args?.activator) ||
-          !sameAddress(decoded.args.recipient, expectedRecipient) || !sameAddress(decoded.args.activator, expectedActivator))) ||
+          !sameAddress(decoded.args.recipient, expectedRecipient))) ||
         (eventName === "CreatedTransaction" && !abiInteger(decoded.args?.txSlot))) {
       throw safeError("WRITE_TRANSACTION_EVENT_DECODING_FAILED");
     }
@@ -1253,7 +1254,7 @@ export function createBradburyRpcClient({ account, fetchFn = globalThis.fetch, e
       }
     }
     return extractUniqueGenLayerTransactionId(receipt.logs, { evmHash: localEvmHash, consensusAddress,
-      expectedRecipient: request.address, expectedActivator: account.address });
+      expectedRecipient: request.address });
   };
 
   return Object.freeze({ rpc, readContract, getBalance, getTransaction, debugTraceTransaction, writeContract });
