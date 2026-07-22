@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "network": "Genlayer Bradbury Testnet",
+  "chain_id": 4221,
+  "genlayer_js_version": "1.1.8",
+  "fixtures": [
+    {
+      "historical_transaction_id": "0xed2e2b341793ec3a1fd48fa096e6ada5c8ed4b83b6ec9fc4d446a20c4c946eb6",
+      "rpc_method": "eth_call",
+      "sdk_contract_method": "getTransactionData(bytes32,uint256)",
+      "source_filename": "approval-getTransactionData-request.json",
+      "kind": "request",
+      "sha256": "5b4d6cf4c33938c3350825306b971d07e1b94c26a6d3756177bf87c514c41800",
+      "eq_blocks_outputs_byte_length": null
+    },
+    {
+      "historical_transaction_id": "0xed2e2b341793ec3a1fd48fa096e6ada5c8ed4b83b6ec9fc4d446a20c4c946eb6",
+      "rpc_method": "eth_call",
+      "sdk_contract_method": "getTransactionData(bytes32,uint256)",
+      "source_filename": "approval-getTransactionData-response.json",
+      "kind": "response",
+      "sha256": "7d3db5237dffb19a399a48333959cbeb8c8da47fa0972ba2f96f234062608c12",
+      "eq_blocks_outputs_byte_length": 580
+    },
+    {
+      "historical_transaction_id": "0xed2e2b341793ec3a1fd48fa096e6ada5c8ed4b83b6ec9fc4d446a20c4c946eb6",
+      "rpc_method": "eth_call",
+      "sdk_contract_method": "getTransactionAllData(bytes32)",
+      "source_filename": "approval-getTransactionAllData-request.json",
+      "kind": "request",
+      "sha256": "f97fe405927ff960c51895867cc85eb7ea790224c4e98aec135c48342b4f0ca4",
+      "eq_blocks_outputs_byte_length": null
+    },
+    {
+      "historical_transaction_id": "0xed2e2b341793ec3a1fd48fa096e6ada5c8ed4b83b6ec9fc4d446a20c4c946eb6",
+      "rpc_method": "eth_call",
+      "sdk_contract_method": "getTransactionAllData(bytes32)",
+      "source_filename": "approval-getTransactionAllData-response.json",
+      "kind": "response",
+      "sha256": "af66321c1964fb7cc612d1723e1f2d98836f46ca31e67308c27c2be0f48c9632",
+      "eq_blocks_outputs_byte_length": 580
+    },
+    {
+      "historical_transaction_id": "0x3113ee6d3bfbb4c911ed2c9b72b090ab081cf8edfcd068be8bcb90a53f0880fa",
+      "rpc_method": "eth_call",
+      "sdk_contract_method": "getTransactionData(bytes32,uint256)",
+      "source_filename": "rejection-getTransactionData-request.json",
+      "kind": "request",
+      "sha256": "e2266e2b870240d7d96dc67cfb67073b4dbeba7fe3b47bc04eecd77033fd774e",
+      "eq_blocks_outputs_byte_length": null
+    },
+    {
+      "historical_transaction_id": "0x3113ee6d3bfbb4c911ed2c9b72b090ab081cf8edfcd068be8bcb90a53f0880fa",
+      "rpc_method": "eth_call",
+      "sdk_contract_method": "getTransactionData(bytes32,uint256)",
+      "source_filename": "rejection-getTransactionData-response.json",
+      "kind": "response",
+      "sha256": "4e2a12bfc77916ab05def3b41e3129bf52c8eef5b8774158b6ee7e4d8e9615a2",
+      "eq_blocks_outputs_byte_length": 313
+    },
+    {
+      "historical_transaction_id": "0x3113ee6d3bfbb4c911ed2c9b72b090ab081cf8edfcd068be8bcb90a53f0880fa",
+      "rpc_method": "eth_call",
+      "sdk_contract_method": "getTransactionAllData(bytes32)",
+      "source_filename": "rejection-getTransactionAllData-request.json",
+      "kind": "request",
+      "sha256": "d80f8d95f919afe34f20ddb868be3409f1fc80136559eb864798a7373d25a61c",
+      "eq_blocks_outputs_byte_length": null
+    },
+    {
+      "historical_transaction_id": "0x3113ee6d3bfbb4c911ed2c9b72b090ab081cf8edfcd068be8bcb90a53f0880fa",
+      "rpc_method": "eth_call",
+      "sdk_contract_method": "getTransactionAllData(bytes32)",
+      "source_filename": "rejection-getTransactionAllData-response.json",
+      "kind": "response",
+      "sha256": "4bd57cb9732767c83916834335bb1bf3e303ebd8622b862770888ffbda656fe5",
+      "eq_blocks_outputs_byte_length": 313
+    }
+  ]
+}

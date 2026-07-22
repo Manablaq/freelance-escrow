@@ -238,7 +238,7 @@ def test_web_failure_matrix(status, body, llm, expected, reason_fragment,
     ("llm", "reason_fragment"),
     [
         ("not json", "malformed output"),
-        (json.dumps({"approved": True, "score": 90, "reason": "ok"}), "malformed or incomplete"),
+        (json.dumps({"approved": True, "score": 90, "reason": "ok"}), "malformed output"),
         (json.dumps({"approved": "true", "score": 90, "reason": "ok", "evidence_summary": "x"}), "malformed or incomplete"),
         (json.dumps({"approved": True, "score": -1, "reason": "ok", "evidence_summary": "x"}), "malformed or incomplete"),
         (json.dumps({"approved": True, "score": 101, "reason": "ok", "evidence_summary": "x"}), "malformed or incomplete"),

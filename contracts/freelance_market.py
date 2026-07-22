@@ -29,6 +29,97 @@ def _clean(text: str, maxlen: int = 500) -> str:
     return text[:maxlen].replace('"', "'") if text else ""
 
 
+def _reject_duplicate_json_keys(pairs):
+    """Build a JSON object while rejecting every repeated key."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON key.")
+        result[key] = value
+    return result
+
+
+def _parse_evaluator_output(model_result):
+    """Extract exactly one bounded evaluator object with exactly four fields."""
+    expected_keys = (
+        "approved",
+        "score",
+        "reason",
+        "evidence_summary",
+    )
+
+    if type(model_result) is dict:
+        if (
+            len(model_result) != len(expected_keys)
+            or any(key not in model_result for key in expected_keys)
+        ):
+            return None
+
+        try:
+            text = json.dumps(
+                model_result,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except:
+            return None
+    elif isinstance(model_result, bytes):
+        if len(model_result) > 4000:
+            return None
+        try:
+            text = model_result.decode("utf-8")
+        except:
+            return None
+    elif isinstance(model_result, str):
+        text = model_result
+    else:
+        return None
+
+    if len(text) > 4000:
+        return None
+
+    text = text.strip()
+    if not text:
+        return None
+
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline < 0 or not text.endswith("```"):
+            return None
+
+        opening_fence = text[:first_newline].strip().lower()
+        if opening_fence not in ("```", "```json"):
+            return None
+
+        text = text[first_newline + 1:-3].strip()
+
+    object_start = text.find("{")
+    if object_start < 0:
+        return None
+
+    try:
+        decoder = json.JSONDecoder(
+            object_pairs_hook=_reject_duplicate_json_keys
+        )
+        parsed, consumed = decoder.raw_decode(text[object_start:])
+    except:
+        return None
+
+    if (
+        type(parsed) is not dict
+        or len(parsed) != len(expected_keys)
+        or any(key not in parsed for key in expected_keys)
+    ):
+        return None
+
+    trailing = text[object_start + consumed:].strip()
+    if trailing:
+        return None
+
+    return parsed
+
+
 def _rejection_result(reason: str) -> str:
     """Return a bounded, canonical fail-closed evaluation result."""
     return json.dumps({
@@ -85,38 +176,55 @@ def _evaluate_submitted_work(evaluation_context: str) -> str:
 
     try:
         model_result = gl.nondet.exec_prompt(prompt)
-        parsed = json.loads(model_result.strip().replace("```json", "").replace("```", ""))
-        approved = parsed.get("approved")
-        score = parsed.get("score")
-        reason = parsed.get("reason")
-        evidence_summary = parsed.get("evidence_summary")
-        if (
-            not isinstance(approved, bool)
-            or isinstance(score, bool)
-            or not isinstance(score, int)
-            or score < 0
-            or score > 100
-            or not isinstance(reason, str)
-            or not reason.strip()
-            or not isinstance(evidence_summary, str)
-            or not evidence_summary.strip()
-        ):
-            return _rejection_result("The evaluator returned malformed or incomplete evidence.")
-        if approved and score < 70:
-            return _rejection_result("The evaluator approval did not meet the completion threshold.")
-        return json.dumps({
-            "approved": approved,
-            "score": score,
-            "reason": _clean(reason, 500),
-            "evidence_summary": _clean(evidence_summary, 500),
-        }, sort_keys=True)
     except:
+        return _rejection_result("The evaluator model call failed.")
+
+    parsed = _parse_evaluator_output(model_result)
+    if parsed is None:
         return _rejection_result("The evaluator returned malformed output.")
+
+    approved = parsed.get("approved")
+    score = parsed.get("score")
+    reason = parsed.get("reason")
+    evidence_summary = parsed.get("evidence_summary")
+    if (
+        not isinstance(approved, bool)
+        or isinstance(score, bool)
+        or not isinstance(score, int)
+        or score < 0
+        or score > 100
+        or not isinstance(reason, str)
+        or not isinstance(evidence_summary, str)
+    ):
+        return _rejection_result("The evaluator returned malformed or incomplete evidence.")
+
+    clean_reason = _clean(reason.strip(), 500)
+    clean_evidence_summary = _clean(evidence_summary.strip(), 500)
+    if (
+        not clean_reason.strip()
+        or not clean_evidence_summary.strip()
+    ):
+        return _rejection_result("The evaluator returned malformed or incomplete evidence.")
+
+    if approved and score < 70:
+        return _rejection_result("The evaluator approval did not meet the completion threshold.")
+
+    return json.dumps({
+        "approved": approved,
+        "score": score,
+        "reason": clean_reason,
+        "evidence_summary": clean_evidence_summary,
+    }, sort_keys=True)
 
 
 def _parse_consensus_result(verdict_raw: str) -> dict:
     """Validate an accepted nondeterministic result before deterministic settlement."""
-    data = _safe_json(verdict_raw)
+    data = _parse_evaluator_output(verdict_raw)
+    if data is None:
+        return json.loads(_rejection_result(
+            "Consensus returned malformed or insufficient evidence."
+        ))
+
     approved = data.get("approved")
     score = data.get("score")
     reason = data.get("reason")
@@ -128,17 +236,28 @@ def _parse_consensus_result(verdict_raw: str) -> dict:
         or score < 0
         or score > 100
         or not isinstance(reason, str)
-        or not reason.strip()
         or not isinstance(evidence_summary, str)
-        or not evidence_summary.strip()
+    ):
+        return json.loads(_rejection_result(
+            "Consensus returned malformed or insufficient evidence."
+        ))
+
+    clean_reason = _clean(reason.strip(), 500)
+    clean_evidence_summary = _clean(evidence_summary.strip(), 500)
+    if (
+        not clean_reason.strip()
+        or not clean_evidence_summary.strip()
         or (approved and score < 70)
     ):
-        return json.loads(_rejection_result("Consensus returned malformed or insufficient evidence."))
+        return json.loads(_rejection_result(
+            "Consensus returned malformed or insufficient evidence."
+        ))
+
     return {
         "approved": approved,
         "score": score,
-        "reason": _clean(reason, 500),
-        "evidence_summary": _clean(evidence_summary, 500),
+        "reason": clean_reason,
+        "evidence_summary": clean_evidence_summary,
     }
 
 

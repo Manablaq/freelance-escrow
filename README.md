@@ -72,7 +72,7 @@ AI-assisted verification is probabilistic validator judgment over public evidenc
 - Network: GenLayer Bradbury Testnet, chain ID `4221`
 - RPC: `https://rpc-bradbury.genlayer.com`
 
-See [Deployment reference](docs/DEPLOYMENT.md) and [Hosted Studio full-flow evidence](docs/HOSTED_STUDIO_FULL_TEST_EVIDENCE.md).
+See [Deployment reference](docs/DEPLOYMENT.md), [Hosted Studio full-flow evidence](docs/HOSTED_STUDIO_FULL_TEST_EVIDENCE.md), and the newer [Bradbury supported-runtime evidence](docs/BRADBURY_SUPPORTED_RUNTIME_EVIDENCE_2026-07-20.md) for the separately deployed exact-source reviewer flow.
 
 ## Transaction synchronization
 
@@ -193,7 +193,56 @@ Never store private keys, seed phrases, wallet credentials, Vercel tokens, GitHu
 | `npm run smoke:approval` | Run the write-capable, resumable approval smoke tool |
 | `npm run smoke:rejection` | Run the write-capable, resumable rejection smoke tool |
 
-The smoke commands can load wallet keys and write to Bradbury. They are intentionally excluded from `npm test`, `npm run check`, and CI; do not run them without explicit authorization and controlled testnet credentials.
+The smoke commands can load wallet keys and write to Bradbury. They require the exact `SMOKE_LIVE_BRADBURY=I_UNDERSTAND_THIS_WRITES_TO_BRADBURY` opt-in plus explicit supported-runtime configuration, and are intentionally excluded from `npm test`, `npm run check`, and standard CI. Each invocation canonicalizes the journal parent and acquires a mode-`0600` lock file for that exact journal using exclusive creation and no-follow where supported before journal, key, or client access. It keeps the descriptor open through polling and final persistence and checks the parent and lock device/inode plus its ownership token before release. A crash-left lock is never expired automatically and requires manual investigation and removal. Before any verification write or retry, the runner requires a complete pre-verification snapshot whose freshness starts before the first snapshot read and is at most ten minutes old. Nonce, gas, gas-price, calldata, and signing preparation finish first; freshness is then rechecked synchronously after signing and immediately before starting `eth_sendRawTransaction`, with no asynchronous gap. Stale snapshots fail closed without refreshing the persisted snapshot and require manual investigation or a new controlled run.
+
+The runner does not intercept or replace process-global `console.error`, `console.warn`, or `console.log`. Risky asynchronous GenLayer operations use a runner-owned, injected-fetch Bradbury JSON-RPC adapter for contract views, balances, transaction state, debug-trace classification, and signed transaction submission. HTTP success, requests, JSON-RPC envelopes, method results, decoded contract views, receipts, logs, and projected transaction evidence use closed schemas; transport, RPC, decoding, signing, trace, and malformed-response failures become fixed secret-safe categories. Transaction polling reproduces pinned `genlayer-js@1.1.8`: concurrent `getTransactionData(hash, currentUnixSeconds)` and `getTransactionAllData(hash)` reads, with status/result from the former and execution result from the latter, followed by additional cross-source identity and request binding. On writes, the local keccak256 hash of the signed legacy transaction must equal both the RPC-returned EVM hash and receipt transaction hash; receipt signer and destination must match, and exactly one recognized `NewTransaction` or `CreatedTransaction` event from the pinned consensus contract supplies the canonical GenLayer ID used for polling. Logs with unknown topic signatures are ignored as unrelated, while any recognized creation-topic log is validated strictly and zero or multiple recognized creation events fail. This does not claim suppression of arbitrary direct stdout or stderr writes by unknown external code. Do not run the smoke commands without explicit authorization and controlled testnet credentials.
+
+A completed journal contains only closed metadata and references a same-directory, deterministic-basename evaluator sidecar containing the exact canonical `eqBlocksOutputs` bytes. The sidecar is a regular mode-`0600` file, is opened without following symlinks, and is never printed, placed in errors or lock metadata, or copied into documentation. Before a completed journal is accepted, the runner verifies the sidecar length and SHA-256, re-runs the production structural decoder, and recomputes the transaction binding, selector, output digest, approval, score, and reason/evidence-summary presence, byte lengths, and hashes. Raw validator prose never enters the journal or ordinary runner output.
+
+Journal and sidecar replacement uses a mode-`0600` durable transaction record with controlled basenames, hashes, and state only. New files are fsynced, prior files are retained under transaction-owned rollback names, and the helper reports `PREPARED_AFTER_RENAME`; the parent verifies the helper, lock, directory, and transaction identities before sending the exact commit acknowledgment. A helper death before the durable commit marker causes rollback under the still-held invocation lock before save failure is returned. A death after the helper has durably recorded the acknowledged commit deterministically rolls forward that one committed pair. Incomplete transaction records are recovered before journal use on a later locked invocation. These claims are limited to the tested protocol and do not imply broader filesystem or hardware guarantees.
+
+### Bradbury supported-runtime reproduction
+
+This workflow is Bradbury-only, writes real testnet transactions, and must be run from the repository root so the journal paths are exactly `.smoke-freelance-market.approval.json` and `.smoke-freelance-market.rejection.json`.
+
+```bash
+npm ci
+export SMOKE_LIVE_BRADBURY=I_UNDERSTAND_THIS_WRITES_TO_BRADBURY
+export SMOKE_BRADBURY_CHAIN_ID=4221
+export SMOKE_BRADBURY_CONTRACT_ADDRESS=0x066131dffbE72e27AB40446620792d45a9a6054a
+export SMOKE_BRADBURY_CLIENT_ADDRESS=0x5bB49021001200fE8156a81c7fcF097e535e7181
+export SMOKE_BRADBURY_FREELANCER_ADDRESS=0x1f87Ae197af539253978d435aD45cCf28Fb95024
+export SMOKE_BRADBURY_CLIENT_PRIVATE_KEY=0xREPLACE_WITH_AUTHORIZED_CLIENT_PRIVATE_KEY
+export SMOKE_BRADBURY_FREELANCER_PRIVATE_KEY=0xREPLACE_WITH_AUTHORIZED_FREELANCER_PRIVATE_KEY
+export SMOKE_ESCROW_WEI=1000000000000000000
+export SMOKE_APPROVAL_DELIVERABLE_URL=https://raw.githubusercontent.com/Manablaq/freelance-escrow/4ffa69be4ed4f5a8122fb57d3d93f29a6056b125/docs/smoke/approval-deliverable.md
+export SMOKE_REJECTION_DELIVERABLE_URL=https://raw.githubusercontent.com/Manablaq/freelance-escrow/4ffa69be4ed4f5a8122fb57d3d93f29a6056b125/docs/smoke/rejection-deliverable.txt
+```
+
+The keys must derive exactly to the configured addresses. The client key must control the registered client and have at least the exact 1 GEN escrow plus Bradbury transaction fees; the freelancer key must control the assigned registered freelancer and have enough GEN for registration/submission fees. Never store real keys in tracked files.
+
+The current approval command uses base title `Document GenLayer escrow verification` and base description `Provide a public page that clearly and specifically documents this GenLayer freelance escrow verification workflow and its approval behavior.` The current rejection command uses base title `Summarize GenLayer escrow requirements` and base description `Provide a public page that clearly and specifically summarizes this GenLayer freelance escrow contract and its semantic verification requirements.` A unique `[smoke:<run-id>]` marker is prepended/appended. Run one authorized flow at a time:
+
+```bash
+npm run smoke:approval
+npm run smoke:rejection
+```
+
+Expected transitions are `OPEN` → `FUNDED` with exactly `1000000000000000000` wei → `SUBMITTED`, then `PAID`/`APPROVED` for approval or `DISPUTED`/`REJECTED` for rejection. `ACCEPTED` is only an intermediate execution receipt. Terminal evidence begins only after the exact verification transaction reaches `FINALIZED`, status code `7`, `AGREE` or `MAJORITY_AGREE`, `FINISHED_WITH_RETURN`, and a non-null structurally decoded comparative output. Approval then requires a 1 GEN increase in `total_paid`, `total_earned`, `jobs_completed +1`, zero escrow, and a 1 GEN finalized freelancer-balance delta. Rejection requires unchanged counters and freelancer balance with the full 1 GEN still escrowed.
+
+Re-running the same command safely resumes its matching journal and never automatically rebroadcasts an ambiguous intent. If a write may have been broadcast but no GenLayer ID was durably recorded, stop and investigate RPC/explorer state; do not guess a hash. A verification retry is permitted only after the journaled prior verification ID is independently proven to be an exact terminal failure and the job remains the same funded `SUBMITTED` job with fresh baseline evidence. The exact retry is:
+
+```bash
+SMOKE_RETRY_VERIFY_FROM_HASH=0xEXACT_PROVEN_TERMINAL_FAILURE_GENLAYER_ID npm run smoke:approval
+# or, for the rejection journal:
+SMOKE_RETRY_VERIFY_FROM_HASH=0xEXACT_PROVEN_TERMINAL_FAILURE_GENLAYER_ID npm run smoke:rejection
+```
+
+Retry is forbidden for a missing/uncertain ID, pending or `ACCEPTED` transaction, successful execution, stale snapshot, changed job/escrow, existing refund, or ID that differs from the latest journaled attempt.
+
+Each invocation holds `<journal>.lock` through completion and uses an inode-bound helper for relative journal I/O. A second invocation fails closed. Locks never expire automatically. For a stale lock, first confirm no runner process is alive, inspect the journal and every recorded transaction, verify the lock and journal still belong to the intended directory, and preserve a copy; only then may an operator manually run `rm -- .smoke-freelance-market.<flow>.json.lock`. Never remove a live or identity-uncertain lock.
+
+Offline fixtures under `tests/fixtures/bradbury-supported-runtime/` authenticate and validate the runner and historical outputs but do not replace fresh authorized Bradbury execution. Their eight SHA-256 values, the two historical transaction IDs, controlled request structures, and decoded expectations are hard-coded directly in the test source; `manifest.json` is descriptive metadata that is independently checked against those constants and never defines the oracle. The captures prove score `95` only for transaction `0xed2e2b341793ec3a1fd48fa096e6ada5c8ed4b83b6ec9fc4d446a20c4c946eb6` and score `0` only for transaction `0x3113ee6d3bfbb4c911ed2c9b72b090ab081cf8edfcd068be8bcb90a53f0880fa`. Future validator outcomes remain nondeterministic. Final submission closure still requires one new authorized approval and one new authorized rejection, both reaching status code `7`, recording real non-null comparative evaluator evidence, and producing complete post-finalization journals before submission to the GenLayer reviewer.
 
 ## Testing and QA
 
