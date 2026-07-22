@@ -119,6 +119,49 @@ export function safeProcessError(error) {
   return safeSmokeErrors.has(error) ? error.message : externalError("SMOKE_FLOW_FAILED", "top_level").message;
 }
 
+function safeErrorCode(error) {
+  if (!safeSmokeErrors.has(error)) return null;
+  const match = /^([A-Z][A-Z0-9_]*)(?: |$)/.exec(String(error.message));
+  return match?.[1] ?? null;
+}
+
+function submitWriteFailure(error) {
+  const stage = safeErrorCode(error);
+
+  if (stage?.startsWith("PRE_VERIFICATION_") ||
+      stage?.startsWith("BEFORE_RAW_BROADCAST_")) {
+    return error;
+  }
+
+  const preBroadcastFailure = stage !== null && (
+    [
+      "WRITE_ACCOUNT_INVALID",
+      "WRITE_REQUEST_INVALID",
+      "WRITE_REQUEST_ENCODING_FAILED",
+      "WRITE_TRANSACTION_SIGNING_FAILED",
+      "WRITE_TRANSACTION_SIGNING_RESULT_INVALID",
+      "RPC_TRANSACTION_BROADCAST_REQUEST_INVALID",
+    ].includes(stage) ||
+    stage.startsWith("RPC_NONCE_READ_") ||
+    stage.startsWith("RPC_GAS_ESTIMATE_") ||
+    stage.startsWith("RPC_GAS_PRICE_")
+  );
+
+  if (preBroadcastFailure) {
+    return externalError("WRITE_PRE_BROADCAST_FAILED", "write_contract", {
+      stage,
+      journal: "intent_remains_recorded",
+      broadcast: "not_started",
+    });
+  }
+
+  return externalError("BROADCAST_RESULT_UNKNOWN", "write_contract", {
+    ...(stage === null ? {} : { stage }),
+    journal: "intent_remains_recorded",
+    broadcast: stage === null ? "unknown" : "started_or_unknown",
+  });
+}
+
 function requireSynchronousDependency(operation) {
   const result = operation();
   if (result && typeof result.then === "function") {
@@ -2505,17 +2548,13 @@ export async function submitStep({ journal, stepName, client, request, sender, s
     try {
       broadcastPromise = client.writeContract(request, { beforeRawBroadcast });
     } catch (error) {
-      if (safeSmokeErrors.has(error) && (String(error.message).startsWith("PRE_VERIFICATION_") ||
-          String(error.message).startsWith("BEFORE_RAW_BROADCAST_"))) throw error;
-      throw externalError("BROADCAST_RESULT_UNKNOWN", "write_contract", { journal: "intent_remains_recorded" });
+      throw submitWriteFailure(error);
     }
     let hash;
     try {
       hash = await broadcastPromise;
     } catch (error) {
-      if (safeSmokeErrors.has(error) && (String(error.message).startsWith("PRE_VERIFICATION_") ||
-          String(error.message).startsWith("BEFORE_RAW_BROADCAST_"))) throw error;
-      throw externalError("BROADCAST_RESULT_UNKNOWN", "write_contract", { journal: "intent_remains_recorded" });
+      throw submitWriteFailure(error);
     }
     if (!validTransactionHash(hash)) {
       throw externalError("BROADCAST_RESULT_UNKNOWN", "write_contract", { journal: "intent_remains_recorded" });

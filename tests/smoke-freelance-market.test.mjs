@@ -847,6 +847,137 @@ test("ambiguous intent refuses resubmission", async () => {
   assert.equal(writes, 0);
 });
 
+test("submitStep identifies trusted pre-broadcast failure without exposing RPC prose", async () => {
+  const value = journal();
+  const secret = "DISTINCTIVE_PRE_BROADCAST_RPC_SECRET";
+  const request = {
+    address: "0xcontract",
+    functionName: "fund",
+    args: ["1"],
+    value: 1n,
+  };
+  let writerCalls = 0;
+
+  await assert.rejects(
+    submitStep({
+      journal: value,
+      stepName: "fund",
+      request,
+      sender: "0xclient",
+      save: async () => {},
+      wait: async () => {},
+      client: {
+        writeContract: () => {
+          writerCalls += 1;
+          return validateJsonRpcResponse({
+            jsonrpc: "2.0",
+            id: 1,
+            error: {
+              code: -32000,
+              message: secret,
+            },
+          }, 1, "eth_estimateGas");
+        },
+      },
+    }),
+    (error) => {
+      assert.equal(
+        error.message,
+        "WRITE_PRE_BROADCAST_FAILED operation=write_contract stage=RPC_GAS_ESTIMATE_RPC_ERROR journal=intent_remains_recorded broadcast=not_started detail=[external error redacted]",
+      );
+      assert.equal(error.message.includes(secret), false);
+      return true;
+    },
+  );
+
+  assert.equal(writerCalls, 1);
+  assert.equal(value.steps.fund.status, "INTENT_RECORDED");
+  assert.equal(value.steps.fund.hash, undefined);
+});
+
+test("submitStep preserves trusted post-broadcast stage while remaining ambiguous", async () => {
+  const value = journal();
+  const secret = "DISTINCTIVE_POST_BROADCAST_RPC_SECRET";
+  const request = {
+    address: "0xcontract",
+    functionName: "fund",
+    args: ["1"],
+    value: 1n,
+  };
+  let writerCalls = 0;
+
+  await assert.rejects(
+    submitStep({
+      journal: value,
+      stepName: "fund",
+      request,
+      sender: "0xclient",
+      save: async () => {},
+      wait: async () => {},
+      client: {
+        writeContract: async () => {
+          writerCalls += 1;
+          return validateJsonRpcResponse({
+            jsonrpc: "2.0",
+            id: 1,
+            error: {
+              code: -32000,
+              message: secret,
+            },
+          }, 1, "eth_getTransactionReceipt");
+        },
+      },
+    }),
+    (error) => {
+      assert.equal(
+        error.message,
+        "BROADCAST_RESULT_UNKNOWN operation=write_contract stage=RPC_TRANSACTION_RECEIPT_RPC_ERROR journal=intent_remains_recorded broadcast=started_or_unknown detail=[external error redacted]",
+      );
+      assert.equal(error.message.includes(secret), false);
+      return true;
+    },
+  );
+
+  assert.equal(writerCalls, 1);
+  assert.equal(value.steps.fund.status, "INTENT_RECORDED");
+  assert.equal(value.steps.fund.hash, undefined);
+});
+
+test("submitStep fully redacts an untrusted writer exception", async () => {
+  const value = journal();
+  const secret = "DISTINCTIVE_UNTRUSTED_WRITER_SECRET";
+  const request = {
+    address: "0xcontract",
+    functionName: "fund",
+    args: ["1"],
+    value: 1n,
+  };
+
+  await assert.rejects(
+    submitStep({
+      journal: value,
+      stepName: "fund",
+      request,
+      sender: "0xclient",
+      save: async () => {},
+      wait: async () => {},
+      client: {
+        writeContract: async () => {
+          throw new Error(secret);
+        },
+      },
+    }),
+    (error) => {
+      assert.equal(
+        error.message,
+        "BROADCAST_RESULT_UNKNOWN operation=write_contract journal=intent_remains_recorded broadcast=unknown detail=[external error redacted]",
+      );
+      assert.equal(error.message.includes(secret), false);
+      return true;
+    },
+  );
+});
+
 test("recorded hash is inspected and never submitted", async () => {
   let writes = 0;
   let inspected;
